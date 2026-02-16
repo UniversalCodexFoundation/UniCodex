@@ -303,7 +303,39 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     // 步骤 5：生成并写入 `unicodex.toml`。
     // -------------------------------------------------------------------------
     let project_config = build_project_config(&ucx_id, options);
-    let toml_content = toml::to_string_pretty(&project_config)?;
+    let mut toml_content = toml::to_string_pretty(&project_config)?;
+
+    // Append commented-out examples for optional TOML sections.
+    // 追加注释掉的可选 TOML 段示例。
+    toml_content.push_str(r#"
+# --- 以下为可选配置段示例（取消注释即可启用） ---
+
+# [series]
+# name = "系列名称"
+# index = 1
+# total = 5
+
+# [description]
+# short = "一句话简介（≤100字符）"
+# long = "详细简介，支持换行"
+
+# [rights]
+# statement = "版权所有 © 2026 作者名"
+# license = "CC-BY-NC-4.0"
+
+# [cover]
+# path = "assets/cover.jpg"
+
+# [rating]
+# system = "age"
+# value = "all"
+
+# [dates]
+# created = "2026-01-01"
+# published = ""
+# modified = ""
+"#);
+
     fs::write(&config_path, &toml_content)?;
     info!(
         path = %config_path.display(),
