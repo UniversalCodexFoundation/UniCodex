@@ -479,9 +479,21 @@ fn build_default_structure() -> Structure {
 /// 构建第一个示例章节文件的内容。
 /// 返回一个简单的 Markdown 字符串，作为用户创作的起点。
 fn build_first_chapter() -> String {
-    // Simple Markdown with a heading and a placeholder paragraph.
-    // 简单的 Markdown，包含一个标题和一段占位文字。
-    "# 第一章\n\n这是你的第一个章节。开始创作吧！\n".to_string()
+    // Markdown with a heading, placeholder paragraph, and helpful comments.
+    // Markdown，包含标题、占位文字和辅助注释。
+    r#"# 第一章
+
+在这里开始你的创作。
+
+<!-- UCX 提示：
+  - 使用标准 Markdown 语法编写章节内容
+  - 支持的格式：标题(#)、粗体(**)、斜体(*)、列表、引用(>)等
+  - 在 struct.json 中管理章节结构和顺序
+  - 运行 `ucx build` 将项目打包为 .ucx 文件
+  - 更多信息请参阅 https://unicodex.org/docs
+-->
+"#
+    .to_string()
 }
 
 /// Validate a user-supplied input string.
@@ -656,8 +668,12 @@ mod tests {
             "chapter should contain heading"
         );
         assert!(
-            chapter_content.contains("开始创作吧"),
+            chapter_content.contains("开始你的创作"),
             "chapter should contain placeholder text"
+        );
+        assert!(
+            chapter_content.contains("UCX 提示"),
+            "chapter should contain guidance comments"
         );
     }
 

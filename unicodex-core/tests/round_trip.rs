@@ -104,7 +104,7 @@ fn test_full_round_trip() {
         "chapter should contain heading"
     );
     assert!(
-        chapter.contains("开始创作"),
+        chapter.contains("开始你的创作"),
         "chapter should contain placeholder text"
     );
 
