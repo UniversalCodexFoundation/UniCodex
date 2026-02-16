@@ -34,7 +34,8 @@
    - 开发文档目录（`docs/development/`）
 
 **已知问题**：
-- `01-file-structure.md` 和 `05-signature-spec.md` 中可能存在 `metadata/book.json` 的旧引用，应为 `metadata/codex.json`
+- ~~`01-file-structure.md` 和 `05-signature-spec.md` 中可能存在 `metadata/book.json` 的旧引用~~ — 已确认不存在
+- ~~`07-versioning.md` 和 `00-overview.md` 中残留 `ucx-cli` 引用~~ — 已修复
 - 公共类型（UCX ID、Manifest 等）尚未确定归属模块
 - 扩展模块（ucx-audio-book、ucx-interactive）暂时注释，待后续阶段启用
 

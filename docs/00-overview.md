@@ -410,7 +410,7 @@ ucx-verify/
 
 | 分发渠道 | 包名 | 说明 |
 |---------|------|------|
-| crates.io | `unicodex-core`、`ucx-cli` | Rust 包 |
+| crates.io | `unicodex-core`、`ucx-*` | Rust 包 |
 | PyPI | `ucx`、`ucx-sdk` | Python 包 |
 | npm | `@unicodex/ucx` | JavaScript 包 |
 | Homebrew | `ucx` | macOS CLI |
