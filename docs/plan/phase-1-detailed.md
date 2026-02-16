@@ -2,7 +2,7 @@
 
 > 版本：0.1.0
 > 创建时间：2026-02-16
-> 状态：执行中
+> 状态：✅ 已完成
 > 目标版本：v0.2.0-alpha.1
 
 ## 1. 目标
@@ -224,15 +224,15 @@ ucx-types ──┬──→ ucx-init ──────────────
 
 ## 7. 验收标准
 
-- [ ] `cargo check` 通过（所有模块无编译错误）
-- [ ] `cargo test` 通过（所有单元测试 + 集成测试）
-- [ ] `ucx init test-project` 生成正确的目录结构和配置文件
-- [ ] `ucx build` 从项目目录生成有效的 `.ucx` 文件
-- [ ] `ucx info <file>.ucx` 正确显示元数据
-- [ ] round-trip 测试通过（init → build → parse 内容一致）
-- [ ] MANIFEST.MF 哈希验证通过
-- [ ] 代码覆盖：每个公开函数至少有一个测试
-- [ ] 所有代码符合项目注释规范（中英双语）
+- [x] `cargo check` 通过（所有模块无编译错误）
+- [x] `cargo test` 通过（所有单元测试 + 集成测试）— 69 tests 全部通过
+- [x] `ucx init test-project` 生成正确的目录结构和配置文件
+- [x] `ucx build` 从项目目录生成有效的 `.ucx` 文件
+- [x] `ucx info <file>.ucx` 正确显示元数据
+- [x] round-trip 测试通过（init → build → parse 内容一致）
+- [x] MANIFEST.MF 哈希验证通过
+- [x] 代码覆盖：每个公开函数至少有一个测试
+- [x] 所有代码符合项目注释规范（中英双语）
 
 ---
 
