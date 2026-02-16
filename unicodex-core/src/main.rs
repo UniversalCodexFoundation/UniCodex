@@ -135,6 +135,11 @@ enum Commands {
         /// Path to the .ucx file.
         /// .ucx 文件路径。
         file: PathBuf,
+
+        /// Verbose mode: show hash details for all files, even if valid.
+        /// 详细模式：显示所有文件的哈希详情，即使验证通过。
+        #[arg(short, long, default_value_t = false)]
+        verbose: bool,
     },
 
     /// Check (validate) a UCX project without building.
@@ -490,9 +495,13 @@ fn main() -> anyhow::Result<()> {
         // ucx verify — Verify UCX file integrity.
         // ucx verify — 验证 UCX 文件完整性。
         // =====================================================================
-        Commands::Verify { file } => {
+        Commands::Verify { file, verbose } => {
+            let start = std::time::Instant::now();
+
             let mut archive = ucx_parse::open(&file)?;
             let results = archive.verify_hashes()?;
+
+            let elapsed = start.elapsed();
 
             let total = results.len();
             let valid = results.iter().filter(|r| r.valid).count();
@@ -505,7 +514,7 @@ fn main() -> anyhow::Result<()> {
             for result in &results {
                 let status = if result.valid { "OK" } else { "FAIL" };
                 println!("  [{status}] {}", result.name);
-                if !result.valid {
+                if !result.valid || verbose {
                     println!("       expected: {}", result.expected);
                     println!("       actual:   {}", result.actual);
                 }
@@ -513,6 +522,23 @@ fn main() -> anyhow::Result<()> {
 
             println!();
             println!("Result: {valid}/{total} files valid");
+
+            // Show timing information.
+            // 显示耗时信息。
+            let ms = elapsed.as_millis();
+            if ms < 1000 {
+                println!("Verified in {ms}ms");
+            } else {
+                println!("Verified in {:.2}s", elapsed.as_secs_f64());
+            }
+
+            // Check for digital signatures.
+            // 检查数字签名。
+            let has_signatures = archive.list_files().iter().any(|f| f.starts_with("META-INF/signatures/"));
+            if !has_signatures {
+                println!();
+                println!("Note: no digital signatures found — integrity verified against MANIFEST.MF hashes only");
+            }
 
             if invalid > 0 {
                 anyhow::bail!("{invalid} file(s) failed integrity check");
