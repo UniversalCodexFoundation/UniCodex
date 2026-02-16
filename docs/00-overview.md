@@ -234,7 +234,7 @@ Unicodex/                           # 项目根目录
 ```toml
 # Cargo.toml (根目录)
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "unicodex-core",
     "ucx-init",
@@ -244,38 +244,43 @@ members = [
     "ucx-sign",
     "ucx-version",
     "ucx-crypto",
-    # 扩展模块
-    "ucx-audio-book",
-    "ucx-interactive",
+    # 扩展模块（预留）
+    # "ucx-audio-book",
+    # "ucx-interactive",
 ]
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
+version = "0.1.0-alpha.1"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/unicodex/unicodex"
 authors = ["Unicodex Contributors"]
+rust-version = "1.85"
 
 [workspace.dependencies]
 # 内部依赖
-unicodex-core = { path = "unicodex-core" }
-ucx-verify = { path = "ucx-verify" }
-ucx-sign = { path = "ucx-sign" }
+ucx-init    = { path = "ucx-init" }
+ucx-build   = { path = "ucx-build" }
+ucx-parse   = { path = "ucx-parse" }
+ucx-verify  = { path = "ucx-verify" }
+ucx-sign    = { path = "ucx-sign" }
 ucx-version = { path = "ucx-version" }
-ucx-crypto = { path = "ucx-crypto" }
+ucx-crypto  = { path = "ucx-crypto" }
 
 # 外部依赖（统一版本管理）
-blake3 = "1.5"
-ed25519-dalek = "2.1"
-zip = "0.6"
-git2 = "0.19"
+blake3 = "1.8"
+ed25519-dalek = "2.2"
+zip = "8.0"
+git2 = "0.20"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
-thiserror = "1.0"
+toml = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
-clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1.35", features = ["full"] }
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.49", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 ```
 
 ### 7.6 模块职责划分

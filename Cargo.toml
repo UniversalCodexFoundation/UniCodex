@@ -9,9 +9,9 @@
 # =============================================================================
 
 [workspace]
-# Use the v2 resolver for better feature unification.
-# 使用 v2 解析器以获得更好的 feature 统一行为。
-resolver = "2"
+# Use the v3 resolver (default for edition 2024).
+# 使用 v3 解析器（edition 2024 的默认行为）。
+resolver = "3"
 members = [
     # --- Core CLI entry point / 核心 CLI 入口 ---
     "unicodex-core",
@@ -38,11 +38,11 @@ members = [
 # =============================================================================
 [workspace.package]
 version = "0.1.0-alpha.1"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/unicodex/unicodex"
 authors = ["Unicodex Contributors"]
-rust-version = "1.75"
+rust-version = "1.85"
 
 # =============================================================================
 # Shared dependencies / 共享依赖
@@ -67,21 +67,21 @@ ucx-version = { path = "ucx-version" }
 ucx-crypto  = { path = "ucx-crypto" }
 
 # --- Hashing / 哈希 ---
-blake3 = "1.5"                                       # High-performance hash function / 高性能哈希函数
+blake3 = "1.8"                                       # High-performance hash function / 高性能哈希函数
 
 # --- Cryptography / 密码学 ---
-ed25519-dalek = "2.1"                                # Ed25519 signatures / Ed25519 签名
+ed25519-dalek = "2.2"                                # Ed25519 signatures / Ed25519 签名
 
 # --- Archive / 归档 ---
-zip = "2.6"                                          # ZIP archive operations / ZIP 归档操作
+zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作
 
 # --- Version control / 版本控制 ---
-git2 = "0.19"                                        # libgit2 Rust bindings / libgit2 的 Rust 绑定
+git2 = "0.20"                                        # libgit2 Rust bindings / libgit2 的 Rust 绑定
 
 # --- Serialization / 序列化 ---
 serde = { version = "1.0", features = ["derive"] }   # Serialization framework / 序列化框架
 serde_json = "1.0"                                   # JSON support / JSON 支持
-toml = "0.8"                                         # TOML support / TOML 支持
+toml = "1.0"                                         # TOML support / TOML 支持
 
 # --- Error handling / 错误处理 ---
 thiserror = "2.0"                                    # Library error types / 库错误类型定义
@@ -91,7 +91,7 @@ anyhow = "1.0"                                       # Application error handlin
 clap = { version = "4.5", features = ["derive"] }    # CLI argument parsing / 命令行参数解析
 
 # --- Async runtime / 异步运行时 ---
-tokio = { version = "1.43", features = ["full"] }    # Async runtime for network ops / 异步运行时（网络操作）
+tokio = { version = "1.49", features = ["full"] }    # Async runtime for network ops / 异步运行时（网络操作）
 
 # --- Logging / 日志 ---
 tracing = "0.1"                                      # Structured logging / 结构化日志
