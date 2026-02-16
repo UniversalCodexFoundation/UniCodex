@@ -18,7 +18,7 @@
 //!     name: "我的小说".to_string(),
 //!     author: "作者名".to_string(),
 //!     language: "zh-CN".to_string(),
-//!     allow_long_fields: false,
+//!     ..Default::default()
 //! };
 //! init(Path::new("./my-novel"), &options).unwrap();
 //! ```
@@ -50,14 +50,24 @@ const CONFIG_FILE_NAME: &str = "unicodex.toml";
 /// 内容结构文件的名称。
 const STRUCT_FILE_NAME: &str = "struct.json";
 
-/// Standard subdirectories created during project initialization.
-/// 项目初始化时创建的标准子目录。
+/// Standard subdirectories created during default project initialization.
+/// 默认项目初始化时创建的标准子目录。
+///
+/// Only `content/` is created by default. Use `--full` flag to create
+/// the complete directory structure.
+/// 默认只创建 `content/`。使用 `--full` 标志创建完整目录结构。
+const DEFAULT_DIRS: &[&str] = &["content"];
+
+/// Full set of subdirectories created with `--full` flag.
+/// 使用 `--full` 标志时创建的完整子目录集合。
 ///
 /// - `content/`  — Markdown chapter files / Markdown 章节文件
 /// - `assets/`   — Images, fonts, and other assets / 图片、字体等资源
 /// - `extras/`   — Supplementary materials / 附录资料
-/// - `dist/`     — Build output directory / 构建输出目录
-const STANDARD_DIRS: &[&str] = &["content", "assets", "extras", "dist"];
+///
+/// Note: `dist/` is always created by `ucx build` on demand.
+/// 注意：`dist/` 始终由 `ucx build` 按需创建。
+const FULL_DIRS: &[&str] = &["content", "assets", "extras"];
 
 /// The default first chapter filename.
 /// 默认的第一章文件名。
@@ -139,6 +149,12 @@ pub struct InitOptions {
     /// Whether to allow fields longer than the default 500-character limit.
     /// 是否允许超过默认 500 字符上限的字段。
     pub allow_long_fields: bool,
+
+    /// Whether to create the full directory structure (content/, assets/, extras/).
+    /// 是否创建完整目录结构（content/、assets/、extras/）。
+    /// Default false: only creates content/.
+    /// 默认 false：仅创建 content/。
+    pub full: bool,
 }
 
 impl Default for InitOptions {
@@ -151,6 +167,7 @@ impl Default for InitOptions {
             author: "未知".to_string(),
             language: "zh-CN".to_string(),
             allow_long_fields: false,
+            full: false,
         }
     }
 }
@@ -254,10 +271,13 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     }
 
     // -------------------------------------------------------------------------
-    // Step 3: Create standard subdirectories.
-    // 步骤 3：创建标准子目录。
+    // Step 3: Create subdirectories.
+    // 步骤 3：创建子目录。
     // -------------------------------------------------------------------------
-    for dir_name in STANDARD_DIRS {
+    // Default: only content/. With --full: content/, assets/, extras/.
+    // 默认：仅 content/。使用 --full 时：content/、assets/、extras/。
+    let dirs = if options.full { FULL_DIRS } else { DEFAULT_DIRS };
+    for dir_name in dirs {
         let dir_path = path.join(dir_name);
         // create_dir_all is idempotent — safe to call even if dir exists.
         // create_dir_all 是幂等的 — 即使目录已存在也安全。
@@ -604,12 +624,14 @@ mod tests {
         // 验证项目根目录已创建。
         assert!(project_dir.exists(), "project root should exist");
 
-        // Verify all standard subdirectories were created.
-        // 验证所有标准子目录已创建。
-        for dir_name in STANDARD_DIRS {
-            let dir = project_dir.join(dir_name);
-            assert!(dir.is_dir(), "{dir_name}/ should be a directory");
-        }
+        // Verify the content/ subdirectory was created (default mode).
+        // 验证 content/ 子目录已创建（默认模式）。
+        assert!(project_dir.join("content").is_dir(), "content/ should be a directory");
+        // In default mode, assets/ and extras/ should NOT be created.
+        // 默认模式下，assets/ 和 extras/ 不应被创建。
+        assert!(!project_dir.join("assets").exists(), "assets/ should not exist in default mode");
+        assert!(!project_dir.join("extras").exists(), "extras/ should not exist in default mode");
+        assert!(!project_dir.join("dist").exists(), "dist/ should not exist (created by build)");
 
         // Verify unicodex.toml was created.
         // 验证 unicodex.toml 已创建。
@@ -920,6 +942,7 @@ mod tests {
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
             allow_long_fields: false,
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
         assert!(result.is_err(), "should reject overlong name");
@@ -937,6 +960,7 @@ mod tests {
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
             allow_long_fields: true,
+            ..Default::default()
         };
         let result_ok = init(&project_dir, &options_ok);
         assert!(result_ok.is_ok(), "should allow overlong name with allow_long_fields");

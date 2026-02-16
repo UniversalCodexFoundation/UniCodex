@@ -60,6 +60,11 @@ enum Commands {
         /// 允许 name/author 字段超过 500 字符。
         #[arg(long, default_value_t = false)]
         allow_long_fields: bool,
+
+        /// Create full directory structure (content/, assets/, extras/).
+        /// 创建完整目录结构（content/、assets/、extras/）。
+        #[arg(long, default_value_t = false)]
+        full: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -180,12 +185,14 @@ fn main() -> anyhow::Result<()> {
             author,
             language,
             allow_long_fields,
+            full,
         } => {
             let options = ucx_init::InitOptions {
                 name: name.clone(),
                 author,
                 language,
                 allow_long_fields,
+                full,
             };
 
             ucx_init::init(&path, &options)?;
