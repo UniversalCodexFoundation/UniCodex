@@ -27,7 +27,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 // --- Sub-modules / 子模块 ---
 pub mod archive;
@@ -185,6 +185,18 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     );
 
     // -------------------------------------------------------------------------
+    // Step 3.5: Validate struct.json constraints.
+    // 步骤 3.5：校验 struct.json 约束条件。
+    // -------------------------------------------------------------------------
+    // P-005: Validate that `file` and `children` are mutually exclusive.
+    // P-005：校验 `file` 和 `children` 互斥。
+    validate_structure_nodes(&structure.structure)?;
+
+    // P-006: Validate that all referenced files exist in content/ directory.
+    // P-006：校验所有引用的文件存在于 content/ 目录下。
+    validate_file_references(&structure.structure, &project_path.join("content"))?;
+
+    // -------------------------------------------------------------------------
     // Step 4: Collect all files from content/ and assets/ directories.
     // 步骤 4：收集 content/ 和 assets/ 目录下的所有文件。
     // -------------------------------------------------------------------------
@@ -304,6 +316,96 @@ fn dir_name_or_default(path: &Path) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or("output")
         .to_string()
+}
+
+/// Recursively validate structure nodes — enforce `file`/`children` mutual exclusivity.
+///
+/// Per spec `01-file-structure.md §4.1`:
+/// - A node with `file` is a leaf and MUST NOT have `children`.
+/// - A node with `children` is a container and MUST NOT have `file`.
+/// - A node must have exactly one of `file` or `children`.
+///
+/// 递归校验结构节点 — 强制 `file`/`children` 互斥约束。
+/// 根据规范 `01-file-structure.md §4.1`：
+/// - 有 `file` 的节点是叶子节点，不能有 `children`。
+/// - 有 `children` 的节点是容器节点，不能有 `file`。
+/// - 节点必须恰好有 `file` 或 `children` 之一。
+fn validate_structure_nodes(nodes: &[ucx_types::StructureNode]) -> Result<(), BuildError> {
+    for node in nodes {
+        // Both `file` and `children` present — violates mutual exclusivity.
+        // `file` 和 `children` 同时存在 — 违反互斥约束。
+        if node.file.is_some() && node.children.is_some() {
+            return Err(BuildError::InvalidStructure(format!(
+                "node '{}' has both 'file' and 'children' — they are mutually exclusive per spec §4.1",
+                node.title
+            )));
+        }
+
+        // Neither `file` nor `children` — invalid node.
+        // `file` 和 `children` 都不存在 — 无效节点。
+        if node.file.is_none() && node.children.is_none() {
+            return Err(BuildError::InvalidStructure(format!(
+                "node '{}' has neither 'file' nor 'children' — one is required per spec §4.1",
+                node.title
+            )));
+        }
+
+        // Recurse into children if present.
+        // 如果有子节点则递归校验。
+        if let Some(ref children) = node.children {
+            validate_structure_nodes(children)?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate that all file references in struct.json exist in the content directory.
+///
+/// Warns for missing files but does not fail the build by default.
+/// Instead, it collects missing files and emits warnings.
+///
+/// 校验 struct.json 中所有文件引用是否存在于 content 目录中。
+/// 对缺失的文件发出警告并报错终止构建。
+fn validate_file_references(
+    nodes: &[ucx_types::StructureNode],
+    content_dir: &Path,
+) -> Result<(), BuildError> {
+    let mut missing = Vec::new();
+    collect_missing_files(nodes, content_dir, &mut missing);
+
+    if !missing.is_empty() {
+        for file in &missing {
+            warn!("Referenced file not found: content/{file}");
+        }
+        return Err(BuildError::InvalidStructure(format!(
+            "struct.json references {} missing file(s): {}",
+            missing.len(),
+            missing.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
+/// Recursively collect file references that do not exist on disk.
+///
+/// 递归收集磁盘上不存在的文件引用。
+fn collect_missing_files(
+    nodes: &[ucx_types::StructureNode],
+    content_dir: &Path,
+    missing: &mut Vec<String>,
+) {
+    for node in nodes {
+        if let Some(ref file) = node.file {
+            let file_path = content_dir.join(file);
+            if !file_path.exists() {
+                missing.push(file.clone());
+            }
+        }
+        if let Some(ref children) = node.children {
+            collect_missing_files(children, content_dir, missing);
+        }
+    }
 }
 
 // =============================================================================
@@ -530,5 +632,108 @@ language = "zh-CN"
         let ucx_path = result.unwrap();
         assert_eq!(ucx_path, custom_out.join("my-book.ucx"));
         assert!(ucx_path.exists());
+    }
+
+    /// Test (P-005): build() should fail if struct.json has a node with both `file` and `children`.
+    /// 测试（P-005）：如果 struct.json 的节点同时有 `file` 和 `children`，build() 应失败。
+    #[test]
+    fn test_build_rejects_file_and_children_together() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("both-file-children");
+        fs::create_dir_all(project_dir.join("content")).unwrap();
+
+        // Write unicodex.toml.
+        // 写入 unicodex.toml。
+        let toml = r#"
+[project]
+version = "1.0"
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+[title]
+main = "测试"
+[[creators]]
+name = "作者"
+role = "author"
+[book]
+language = "zh-CN"
+"#;
+        fs::write(project_dir.join("unicodex.toml"), toml).unwrap();
+
+        // Write struct.json with a node that has BOTH `file` and `children` — invalid.
+        // 写入同时包含 `file` 和 `children` 的 struct.json — 无效。
+        let struct_json = r#"{
+    "version": "1.0",
+    "structure": [{
+        "title": "invalid_node",
+        "file": "chapter-001.md",
+        "children": [{"title": "sub", "file": "chapter-001.md"}]
+    }]
+}"#;
+        fs::write(project_dir.join("content/struct.json"), struct_json).unwrap();
+        fs::write(
+            project_dir.join("content/chapter-001.md"),
+            "# Test\n",
+        )
+        .unwrap();
+
+        let result = build(&project_dir, &BuildOptions::default());
+        assert!(result.is_err(), "should reject struct with both file and children");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("mutually exclusive"),
+            "error should mention mutual exclusivity, got: {err_msg}"
+        );
+    }
+
+    /// Test (P-006): build() should fail if struct.json references a nonexistent file.
+    /// 测试（P-006）：如果 struct.json 引用了不存在的文件，build() 应失败。
+    #[test]
+    fn test_build_rejects_missing_file_reference() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("missing-file-ref");
+        fs::create_dir_all(project_dir.join("content")).unwrap();
+
+        // Write unicodex.toml.
+        // 写入 unicodex.toml。
+        let toml = r#"
+[project]
+version = "1.0"
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+[title]
+main = "测试"
+[[creators]]
+name = "作者"
+role = "author"
+[book]
+language = "zh-CN"
+"#;
+        fs::write(project_dir.join("unicodex.toml"), toml).unwrap();
+
+        // Write struct.json referencing a file that does NOT exist.
+        // 写入引用不存在文件的 struct.json。
+        let struct_json = r#"{
+    "version": "1.0",
+    "structure": [
+        {"title": "第一章", "file": "chapter-001.md"},
+        {"title": "第二章", "file": "nonexistent.md"}
+    ]
+}"#;
+        fs::write(project_dir.join("content/struct.json"), struct_json).unwrap();
+        fs::write(
+            project_dir.join("content/chapter-001.md"),
+            "# 第一章\n",
+        )
+        .unwrap();
+        // NOTE: content/nonexistent.md is intentionally NOT created.
+        // 注意：content/nonexistent.md 故意不创建。
+
+        let result = build(&project_dir, &BuildOptions::default());
+        assert!(result.is_err(), "should reject missing file reference");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("nonexistent.md"),
+            "error should mention the missing file, got: {err_msg}"
+        );
     }
 }
