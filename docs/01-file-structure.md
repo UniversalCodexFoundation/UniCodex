@@ -140,7 +140,7 @@ UCX 采用**强制签名验证**机制：
 ```manifest
 Manifest-Version: 1.0
 UCX-Version: 1.0
-Created-By: unicodex-cli 0.1.0
+Created-By: unicodex 0.1.0
 Hash-Algorithm: BLAKE3
 
 Name: metadata/codex.json
@@ -190,7 +190,7 @@ BLAKE3-Digest: e4cfa39a3d37be31c59609e807970799caa68a19bfaa15135f165085e01d41a65
 Signature-Version: 1.0
 UCX-Version: 1.0
 Hash-Algorithm: BLAKE3
-Created-By: unicodex-cli 0.1.0
+Created-By: unicodex 0.1.0
 
 BLAKE3-Digest-Manifest: 8c7dd922ad47494fc02c388e12c00eac12c7dd922ad47494fc02c388e12c00ea
 BLAKE3-Digest-Manifest-Main-Attr: kR7LjKf7zBcU+oP1bHTMvZ4dB5f8G8msGMm/w3SVBe0=

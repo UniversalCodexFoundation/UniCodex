@@ -105,7 +105,7 @@ META-INF/
 ```manifest
 Manifest-Version: 1.0
 UCX-Version: 1.0
-Created-By: unicodex-cli 0.1.0
+Created-By: unicodex 0.1.0
 Hash-Algorithm: BLAKE3
 
 Name: metadata/codex.json
@@ -171,7 +171,7 @@ BLAKE3-Digest: n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is
 Signature-Version: 1.0
 UCX-Version: 1.0
 Hash-Algorithm: BLAKE3
-Created-By: unicodex-cli 0.1.0
+Created-By: unicodex 0.1.0
 
 BLAKE3-Digest-Manifest: jH3ZIq1HSU/ALMiOEsAAqs
  EsfdiSiR/qhUT8hUFBe3R=
