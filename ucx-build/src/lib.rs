@@ -394,6 +394,241 @@ pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResu
 }
 
 // =============================================================================
+// CheckResult / 校验结果
+// =============================================================================
+
+/// Result of a single check item.
+///
+/// 单项检查的结果。
+#[derive(Debug)]
+pub struct CheckItem {
+    /// Name/label of the check.
+    /// 检查项的名称/标签。
+    pub name: String,
+
+    /// Whether the check passed.
+    /// 检查是否通过。
+    pub passed: bool,
+
+    /// Message describing the result (success detail or error reason).
+    /// 描述结果的消息（成功详情或失败原因）。
+    pub message: String,
+}
+
+/// Result of running `ucx check` on a project.
+///
+/// 对项目执行 `ucx check` 的结果。
+#[derive(Debug)]
+pub struct CheckResult {
+    /// List of individual check items.
+    /// 各项检查结果列表。
+    pub items: Vec<CheckItem>,
+}
+
+impl CheckResult {
+    /// Returns `true` if all checks passed.
+    ///
+    /// 当所有检查都通过时返回 `true`。
+    pub fn all_passed(&self) -> bool {
+        self.items.iter().all(|item| item.passed)
+    }
+}
+
+/// Validate a UCX project without building — check config, structure, and references.
+///
+/// Runs all validation checks that `build()` performs (Steps 1–3.5),
+/// plus additional project-health checks (BCP 47 language tag, required fields).
+/// Returns a structured [`CheckResult`] with per-item pass/fail status.
+///
+/// 校验 UCX 项目而不构建 — 检查配置、结构和引用。
+/// 运行 `build()` 执行的所有验证检查（步骤 1–3.5），
+/// 并附加项目健康度检查（BCP 47 语言标签、必需字段）。
+/// 返回结构化的 [`CheckResult`]，包含每项的通过/失败状态。
+pub fn check(project_path: &Path) -> Result<CheckResult, BuildError> {
+    let mut items = Vec::new();
+
+    // -------------------------------------------------------------------------
+    // Check 1: unicodex.toml exists and is parseable.
+    // 检查 1：unicodex.toml 存在且可解析。
+    // -------------------------------------------------------------------------
+    let config_path = project_path.join("unicodex.toml");
+    let config = if !config_path.exists() {
+        items.push(CheckItem {
+            name: "unicodex.toml".to_string(),
+            passed: false,
+            message: "file not found".to_string(),
+        });
+        // Cannot proceed without config.
+        // 无配置文件无法继续。
+        return Ok(CheckResult { items });
+    } else {
+        let toml_content = fs::read_to_string(&config_path)?;
+        match toml::from_str::<ucx_types::ProjectConfig>(&toml_content) {
+            Ok(c) => {
+                items.push(CheckItem {
+                    name: "unicodex.toml".to_string(),
+                    passed: true,
+                    message: format!("parsed successfully (title: \"{}\")", c.title.main),
+                });
+                c
+            }
+            Err(e) => {
+                items.push(CheckItem {
+                    name: "unicodex.toml".to_string(),
+                    passed: false,
+                    message: format!("parse error: {e}"),
+                });
+                return Ok(CheckResult { items });
+            }
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // Check 2: Metadata conversion (ProjectConfig → Codex).
+    // 检查 2：元数据转换（ProjectConfig → Codex）。
+    // -------------------------------------------------------------------------
+    let codex = convert::config_to_codex(&config);
+    items.push(CheckItem {
+        name: "Metadata conversion".to_string(),
+        passed: true,
+        message: "ProjectConfig → Codex OK".to_string(),
+    });
+
+    // -------------------------------------------------------------------------
+    // Check 3: Required fields presence.
+    // 检查 3：必需字段存在性。
+    // -------------------------------------------------------------------------
+    // Check title.main is non-empty.
+    // 检查 title.main 非空。
+    if codex.title.main.trim().is_empty() {
+        items.push(CheckItem {
+            name: "title.main".to_string(),
+            passed: false,
+            message: "title is empty".to_string(),
+        });
+    } else {
+        items.push(CheckItem {
+            name: "title.main".to_string(),
+            passed: true,
+            message: format!("\"{}\"", codex.title.main),
+        });
+    }
+
+    // Check at least one creator.
+    // 检查至少一个创作者。
+    if codex.creators.is_empty() {
+        items.push(CheckItem {
+            name: "creators".to_string(),
+            passed: false,
+            message: "no creators defined".to_string(),
+        });
+    } else {
+        items.push(CheckItem {
+            name: "creators".to_string(),
+            passed: true,
+            message: format!("{} creator(s)", codex.creators.len()),
+        });
+    }
+
+    // Check language (BCP 47 basic format).
+    // 检查语言（BCP 47 基本格式）。
+    let lang = &codex.language;
+    let lang_valid = is_valid_bcp47(lang);
+    if lang_valid {
+        items.push(CheckItem {
+            name: "language".to_string(),
+            passed: true,
+            message: format!("\"{lang}\" (valid BCP 47)"),
+        });
+    } else {
+        items.push(CheckItem {
+            name: "language".to_string(),
+            passed: false,
+            message: format!("\"{lang}\" is not a valid BCP 47 tag"),
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 4: content/struct.json exists and is parseable.
+    // 检查 4：content/struct.json 存在且可解析。
+    // -------------------------------------------------------------------------
+    let struct_path = project_path.join("content").join("struct.json");
+    if !struct_path.exists() {
+        items.push(CheckItem {
+            name: "content/struct.json".to_string(),
+            passed: false,
+            message: "file not found".to_string(),
+        });
+        return Ok(CheckResult { items });
+    }
+
+    let struct_content = fs::read_to_string(&struct_path)?;
+    let structure = match serde_json::from_str::<ucx_types::Structure>(&struct_content) {
+        Ok(s) => {
+            items.push(CheckItem {
+                name: "content/struct.json".to_string(),
+                passed: true,
+                message: format!("{} top-level node(s)", s.structure.len()),
+            });
+            s
+        }
+        Err(e) => {
+            items.push(CheckItem {
+                name: "content/struct.json".to_string(),
+                passed: false,
+                message: format!("parse error: {e}"),
+            });
+            return Ok(CheckResult { items });
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // Check 5: file/children mutual exclusivity.
+    // 检查 5：file/children 互斥约束。
+    // -------------------------------------------------------------------------
+    match validate_structure_nodes(&structure.structure) {
+        Ok(()) => {
+            items.push(CheckItem {
+                name: "Structure nodes".to_string(),
+                passed: true,
+                message: "file/children mutual exclusivity OK".to_string(),
+            });
+        }
+        Err(e) => {
+            items.push(CheckItem {
+                name: "Structure nodes".to_string(),
+                passed: false,
+                message: format!("{e}"),
+            });
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 6: All referenced files exist.
+    // 检查 6：所有引用的文件存在。
+    // -------------------------------------------------------------------------
+    let content_dir = project_path.join("content");
+    match validate_file_references(&structure.structure, &content_dir) {
+        Ok(()) => {
+            items.push(CheckItem {
+                name: "File references".to_string(),
+                passed: true,
+                message: "all referenced files found".to_string(),
+            });
+        }
+        Err(e) => {
+            items.push(CheckItem {
+                name: "File references".to_string(),
+                passed: false,
+                message: format!("{e}"),
+            });
+        }
+    }
+
+    Ok(CheckResult { items })
+}
+
+// =============================================================================
 // Internal helpers / 内部辅助函数
 // =============================================================================
 
@@ -556,6 +791,37 @@ fn collect_missing_files(
             collect_missing_files(children, content_dir, missing);
         }
     }
+}
+
+/// Check if a string is a valid BCP 47 language tag (basic validation).
+///
+/// Accepts: 2-3 letter primary tag, optional dash-separated subtags (1-8 alphanumeric).
+/// Examples: "zh-CN", "en", "en-US", "ja", "zh-Hant-TW".
+///
+/// 检查字符串是否为有效的 BCP 47 语言标签（基本验证）。
+/// 接受：2-3 字母主标签，可选的 dash 分隔子标签（1-8 字母数字）。
+fn is_valid_bcp47(tag: &str) -> bool {
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    // Primary subtag: 2-3 ASCII letters.
+    // 主子标签：2-3 个 ASCII 字母。
+    let primary = parts[0];
+    if primary.len() < 2 || primary.len() > 3 || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+
+    // Remaining subtags: 1-8 ASCII alphanumeric characters each.
+    // 剩余子标签：每个 1-8 个 ASCII 字母数字字符。
+    for part in &parts[1..] {
+        if part.is_empty() || part.len() > 8 || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return false;
+        }
+    }
+
+    true
 }
 
 // =============================================================================

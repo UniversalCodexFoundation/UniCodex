@@ -132,6 +132,15 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Check (validate) a UCX project without building.
+    /// 校验 UCX 项目（不构建）。
+    Check {
+        /// Project directory path (default: current directory).
+        /// 项目目录路径（默认：当前目录）。
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+
     /// Unpack a UCX file to a directory.
     /// 将 UCX 文件解包到目录。
     Unpack {
@@ -457,6 +466,38 @@ fn main() -> anyhow::Result<()> {
 
             if invalid > 0 {
                 anyhow::bail!("{invalid} file(s) failed integrity check");
+            }
+        }
+
+        // =====================================================================
+        // ucx check — Validate project without building.
+        // ucx check — 校验项目（不构建）。
+        // =====================================================================
+        Commands::Check { path } => {
+            let result = ucx_build::check(&path)?;
+
+            println!("=== UCX Project Check ===");
+            println!("Path: {}", path.display());
+            println!();
+
+            let mut passed = 0;
+            let mut failed = 0;
+
+            for item in &result.items {
+                let icon = if item.passed { "OK" } else { "FAIL" };
+                println!("  [{icon}] {}: {}", item.name, item.message);
+                if item.passed {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+
+            println!();
+            println!("Result: {passed} passed, {failed} failed");
+
+            if !result.all_passed() {
+                anyhow::bail!("{failed} check(s) failed");
             }
         }
 
