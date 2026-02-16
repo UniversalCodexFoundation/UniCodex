@@ -370,6 +370,10 @@ fn main() -> anyhow::Result<()> {
             // 打印作品信息。
             println!("=== UCX File Info ===");
             println!("File: {}", file.display());
+
+            // File size / 文件大小
+            let size = archive.file_size();
+            println!("Size: {}", format_file_size(size));
             println!();
 
             // Title / 标题
@@ -382,6 +386,15 @@ fn main() -> anyhow::Result<()> {
             println!("UCX ID: {}", codex.identifier.ucx_id);
             if let Some(ref isbn) = codex.identifier.isbn {
                 println!("ISBN: {isbn}");
+            }
+
+            // Version / 版本
+            println!("Version: {}", codex.version);
+
+            // Created-By / 创建工具
+            let manifest = archive.manifest();
+            if let Some(ref created_by) = manifest.created_by {
+                println!("Created-By: {created_by}");
             }
 
             // Creators / 创作者
@@ -400,6 +413,11 @@ fn main() -> anyhow::Result<()> {
                 println!("Status: {status}");
             }
 
+            // Word count / 字数
+            if let Some(word_count) = codex.word_count {
+                println!("Word count: {word_count}");
+            }
+
             // Genre / 体裁
             if let Some(ref genre) = codex.genre {
                 println!("Genre: {}", genre.join(", "));
@@ -408,6 +426,21 @@ fn main() -> anyhow::Result<()> {
             // Tags / 标签
             if let Some(ref tags) = codex.tags {
                 println!("Tags: {}", tags.join(", "));
+            }
+
+            // Dates / 日期
+            if let Some(ref dates) = codex.dates {
+                println!();
+                println!("Dates:");
+                if let Some(ref created) = dates.created {
+                    println!("  Created:  {created}");
+                }
+                if let Some(ref published) = dates.published {
+                    println!("  Published: {published}");
+                }
+                if let Some(ref modified) = dates.modified {
+                    println!("  Modified: {modified}");
+                }
             }
 
             // Description / 简介
@@ -420,12 +453,15 @@ fn main() -> anyhow::Result<()> {
 
             // Structure / 结构
             let structure = archive.structure();
+            let chapter_count = archive.chapter_count();
             println!();
-            println!("Structure ({} top-level nodes):", structure.structure.len());
+            println!("Structure ({} top-level nodes, {} chapters):",
+                structure.structure.len(),
+                chapter_count
+            );
             print_structure_tree(&structure.structure, 1);
 
             // Manifest / 清单
-            let manifest = archive.manifest();
             println!();
             println!("Manifest ({} entries, {}):",
                 manifest.entries.len(),
@@ -579,5 +615,31 @@ fn print_structure_tree(nodes: &[ucx_types::StructureNode], depth: usize) {
                 print_structure_tree(children, depth + 1);
             }
         }
+    }
+}
+
+/// Format a file size in bytes into a human-readable string.
+///
+/// 将字节数格式化为人类可读的字符串。
+///
+/// # Examples / 示例
+///
+/// - 512 → "512 B"
+/// - 1536 → "1.5 KB"
+/// - 1_048_576 → "1.0 MB"
+fn format_file_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let size = bytes as f64;
+    if size < KB {
+        format!("{bytes} B")
+    } else if size < MB {
+        format!("{:.1} KB", size / KB)
+    } else if size < GB {
+        format!("{:.1} MB", size / MB)
+    } else {
+        format!("{:.1} GB", size / GB)
     }
 }

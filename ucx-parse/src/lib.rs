@@ -110,6 +110,10 @@ pub struct UcxArchive {
     /// 底层 ZIP 归档读取器（未实现 Debug）。
     archive: zip::ZipArchive<std::io::BufReader<std::fs::File>>,
 
+    /// Original file path on disk.
+    /// 磁盘上的原始文件路径。
+    file_path: std::path::PathBuf,
+
     /// Cached codex metadata (from `metadata/codex.json`).
     /// 缓存的作品元数据（来自 `metadata/codex.json`）。
     codex: Codex,
@@ -129,6 +133,7 @@ pub struct UcxArchive {
 impl std::fmt::Debug for UcxArchive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UcxArchive")
+            .field("file_path", &self.file_path)
             .field("codex", &self.codex)
             .field("structure", &self.structure)
             .field("manifest", &self.manifest)
@@ -196,6 +201,7 @@ pub fn open(path: &Path) -> Result<UcxArchive, ParseError> {
 
     Ok(UcxArchive {
         archive,
+        file_path: path.to_path_buf(),
         codex,
         structure,
         manifest,
@@ -226,6 +232,37 @@ impl UcxArchive {
     /// 获取资源清单的引用。
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    /// Get the file size in bytes of the UCX archive on disk.
+    ///
+    /// 获取磁盘上 UCX 归档文件的大小（字节）。
+    pub fn file_size(&self) -> u64 {
+        std::fs::metadata(&self.file_path)
+            .map(|m| m.len())
+            .unwrap_or(0)
+    }
+
+    /// Count the total number of leaf chapters (files) in the structure tree.
+    ///
+    /// Recursively traverses the structure, counting only nodes with a `file` field.
+    ///
+    /// 统计结构树中叶子章节（文件）的总数。
+    /// 递归遍历结构，仅计算有 `file` 字段的节点。
+    pub fn chapter_count(&self) -> usize {
+        fn count_leaves(nodes: &[ucx_types::StructureNode]) -> usize {
+            let mut count = 0;
+            for node in nodes {
+                if node.file.is_some() {
+                    count += 1;
+                }
+                if let Some(ref children) = node.children {
+                    count += count_leaves(children);
+                }
+            }
+            count
+        }
+        count_leaves(&self.structure.structure)
     }
 
     /// Read the text content of a specific chapter file.
