@@ -263,12 +263,15 @@ impl UcxArchive {
     /// Verify the hashes of all files listed in the manifest.
     ///
     /// For each entry in the manifest, reads the file from the archive,
-    /// computes its BLAKE3 hash, and compares it to the expected digest.
+    /// computes its BLAKE3 hash, encodes it as Base64, and compares it
+    /// to the expected digest stored in MANIFEST.MF.
     ///
     /// 验证清单中列出的所有文件的哈希值。
     /// 对清单中的每个条目，从归档中读取文件，计算 BLAKE3 哈希，
-    /// 并与预期摘要对比。
+    /// 编码为 Base64，并与 MANIFEST.MF 中存储的预期摘要对比。
     pub fn verify_hashes(&mut self) -> Result<Vec<HashVerifyResult>, ParseError> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+
         let mut results = Vec::with_capacity(self.manifest.entries.len());
 
         // Clone entries to avoid borrowing issues (manifest is borrowed immutably
@@ -281,23 +284,23 @@ impl UcxArchive {
             // 从归档中读取文件内容。
             let bytes = read_entry_bytes(&mut self.archive, &entry.name)?;
 
-            // Compute BLAKE3 hash and convert to hex string.
-            // 计算 BLAKE3 哈希并转换为十六进制字符串。
+            // Compute BLAKE3 hash and encode as Base64 (matching MANIFEST.MF format).
+            // 计算 BLAKE3 哈希并编码为 Base64（匹配 MANIFEST.MF 格式）。
             let actual_hash = blake3::hash(&bytes);
-            let actual_hex = actual_hash.to_hex().to_string();
+            let actual_b64 = BASE64_STANDARD.encode(actual_hash.as_bytes());
 
-            let valid = actual_hex == entry.digest;
+            let valid = actual_b64 == entry.digest;
             if !valid {
                 warn!(
                     "Hash mismatch for '{}': expected={}, actual={}",
-                    entry.name, entry.digest, actual_hex
+                    entry.name, entry.digest, actual_b64
                 );
             }
 
             results.push(HashVerifyResult {
                 name: entry.name.clone(),
                 expected: entry.digest.clone(),
-                actual: actual_hex,
+                actual: actual_b64,
                 valid,
             });
         }

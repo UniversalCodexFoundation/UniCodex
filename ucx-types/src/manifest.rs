@@ -20,6 +20,7 @@
 //! - 主段包含全局属性
 //! - 条目段包含文件特定属性
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -297,23 +298,35 @@ pub struct ManifestEntry {
 }
 
 impl ManifestEntry {
-    /// Create a new manifest entry from raw hash bytes (encodes to hex).
+    /// Create a new manifest entry from raw hash bytes (encodes to Base64).
     ///
-    /// 从原始哈希字节创建新的清单条目（编码为十六进制）。
+    /// Uses standard Base64 encoding (with padding) as specified in
+    /// `01-file-structure.md §3.2`, consistent with JAR MANIFEST format.
+    ///
+    /// 从原始哈希字节创建新的清单条目（编码为 Base64）。
+    /// 使用标准 Base64 编码（含 padding），符合 `01-file-structure.md §3.2` 规范，
+    /// 与 JAR MANIFEST 格式保持一致。
     pub fn new(name: String, size: u64, hash_bytes: &[u8]) -> Self {
         Self {
             name,
             size,
-            digest: hex_encode(hash_bytes),
+            digest: BASE64_STANDARD.encode(hash_bytes),
         }
     }
 }
 
-/// Encode bytes as a lowercase hex string.
+/// Decode a Base64-encoded digest string back to raw bytes.
 ///
-/// 将字节编码为小写十六进制字符串。
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// 将 Base64 编码的摘要字符串解码回原始字节。
+///
+/// # Errors / 错误
+///
+/// Returns `ManifestError::InvalidField` if the string is not valid Base64.
+/// 如果字符串不是有效的 Base64，返回 `ManifestError::InvalidField`。
+pub fn decode_digest(digest: &str) -> Result<Vec<u8>, ManifestError> {
+    BASE64_STANDARD
+        .decode(digest)
+        .map_err(|e| ManifestError::InvalidField(format!("invalid Base64 digest: {e}")))
 }
 
 // =============================================================================
@@ -459,14 +472,15 @@ mod tests {
 
     #[test]
     fn test_manifest_entry_from_bytes() {
-        // ManifestEntry::new should hex-encode the hash bytes.
-        // ManifestEntry::new 应将哈希字节编码为十六进制。
+        // ManifestEntry::new should Base64-encode the hash bytes.
+        // ManifestEntry::new 应将哈希字节编码为 Base64。
         let entry = ManifestEntry::new(
             "test.txt".to_string(),
             100,
             &[0xab, 0xcd, 0xef, 0x01],
         );
-        assert_eq!(entry.digest, "abcdef01");
+        // Base64 of [0xab, 0xcd, 0xef, 0x01] = "q83vAQ=="
+        assert_eq!(entry.digest, "q83vAQ==");
     }
 
     #[test]

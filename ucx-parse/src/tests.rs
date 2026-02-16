@@ -10,6 +10,7 @@
 use std::io::Write as IoWrite;
 use std::path::Path;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use zip::write::SimpleFileOptions;
 
 use super::*;
@@ -80,13 +81,15 @@ fn build_manifest_mf(files: &[(&str, &[u8])]) -> String {
     mf.push_str("Hash-Algorithm: BLAKE3\n");
 
     // Per-entry sections / 条目段
+    // Use Base64 encoding for BLAKE3 digests (matching spec §3.2).
+    // 使用 Base64 编码 BLAKE3 摘要（符合规范 §3.2）。
     for (name, content) in files {
         let hash = blake3::hash(content);
-        let hex = hash.to_hex();
+        let b64 = BASE64_STANDARD.encode(hash.as_bytes());
         mf.push('\n');
         mf.push_str(&format!("Name: {name}\n"));
         mf.push_str(&format!("Size: {}\n", content.len()));
-        mf.push_str(&format!("BLAKE3-Digest: {hex}\n"));
+        mf.push_str(&format!("BLAKE3-Digest: {b64}\n"));
     }
 
     mf
