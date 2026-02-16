@@ -27,7 +27,7 @@ use std::fs;
 use std::path::Path;
 
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 // Import shared types from ucx-types.
 // 从 ucx-types 导入共享类型。
@@ -155,6 +155,12 @@ pub struct InitOptions {
     /// Default false: only creates content/.
     /// 默认 false：仅创建 content/。
     pub full: bool,
+
+    /// Whether to skip Git repository initialization.
+    /// 是否跳过 Git 仓库初始化。
+    /// Default false: automatically runs `git init` and creates `.gitignore`.
+    /// 默认 false：自动执行 `git init` 并创建 `.gitignore`。
+    pub no_git: bool,
 }
 
 impl Default for InitOptions {
@@ -168,6 +174,7 @@ impl Default for InitOptions {
             language: "zh-CN".to_string(),
             allow_long_fields: false,
             full: false,
+            no_git: false,
         }
     }
 }
@@ -366,6 +373,34 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
         path = %chapter_path.display(),
         "Written first chapter / 已写入第一章"
     );
+
+    // -------------------------------------------------------------------------
+    // Step 8: Initialize Git repository (unless --no-git).
+    // 步骤 8：初始化 Git 仓库（除非指定 --no-git）。
+    // -------------------------------------------------------------------------
+    if !options.no_git {
+        match git2::Repository::init(path) {
+            Ok(_repo) => {
+                // Write .gitignore file with default ignore patterns.
+                // 写入 .gitignore 文件，包含默认忽略模式。
+                let gitignore_content = "dist/\n*.ucx\ntarget/\n";
+                let gitignore_path = path.join(".gitignore");
+                fs::write(&gitignore_path, gitignore_content)?;
+                info!(
+                    path = %path.display(),
+                    "Git repository initialized with .gitignore / Git 仓库已初始化并创建 .gitignore"
+                );
+            }
+            Err(e) => {
+                // Git init failure should not block project creation.
+                // Git 初始化失败不应阻止项目创建。
+                warn!(
+                    error = %e,
+                    "Failed to initialize Git repository (project creation continues) / Git 仓库初始化失败（项目创建继续）"
+                );
+            }
+        }
+    }
 
     info!(
         path = %path.display(),
@@ -1056,5 +1091,36 @@ mod tests {
             let result = init(&project_dir, &options);
             assert!(result.is_err(), "should reject invalid language tag: '{invalid_tag}'");
         }
+    }
+
+    /// Test (P-003): ucx init should create a Git repository and .gitignore.
+    ///
+    /// 测试（P-003）：ucx init 应创建 Git 仓库和 .gitignore。
+    #[test]
+    fn test_init_creates_git_repo() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("git-project");
+
+        let options = InitOptions {
+            name: "Git测试".to_string(),
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+            no_git: false,
+            ..Default::default()
+        };
+        init(&project_dir, &options).expect("init should succeed");
+
+        // Verify .git/ directory was created.
+        // 验证 .git/ 目录已创建。
+        assert!(project_dir.join(".git").is_dir(), ".git/ directory should exist");
+
+        // Verify .gitignore was created with expected content.
+        // 验证 .gitignore 已创建且包含预期内容。
+        let gitignore_path = project_dir.join(".gitignore");
+        assert!(gitignore_path.is_file(), ".gitignore should exist");
+        let gitignore = fs::read_to_string(&gitignore_path).unwrap();
+        assert!(gitignore.contains("dist/"), ".gitignore should ignore dist/");
+        assert!(gitignore.contains("*.ucx"), ".gitignore should ignore *.ucx");
+        assert!(gitignore.contains("target/"), ".gitignore should ignore target/");
     }
 }

@@ -65,6 +65,11 @@ enum Commands {
         /// 创建完整目录结构（content/、assets/、extras/）。
         #[arg(long, default_value_t = false)]
         full: bool,
+
+        /// Skip Git repository initialization.
+        /// 跳过 Git 仓库初始化。
+        #[arg(long, default_value_t = false)]
+        no_git: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -186,6 +191,7 @@ fn main() -> anyhow::Result<()> {
             language,
             allow_long_fields,
             full,
+            no_git,
         } => {
             let options = ucx_init::InitOptions {
                 name: name.clone(),
@@ -193,6 +199,7 @@ fn main() -> anyhow::Result<()> {
                 language,
                 allow_long_fields,
                 full,
+                no_git,
             };
 
             ucx_init::init(&path, &options)?;
