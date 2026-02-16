@@ -55,6 +55,11 @@ enum Commands {
         /// 主要语言（BCP 47 标签，如 "zh-CN"、"en"）。
         #[arg(short, long, default_value = "zh-CN")]
         language: String,
+
+        /// Allow name/author fields longer than 500 characters.
+        /// 允许 name/author 字段超过 500 字符。
+        #[arg(long, default_value_t = false)]
+        allow_long_fields: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -174,11 +179,13 @@ fn main() -> anyhow::Result<()> {
             name,
             author,
             language,
+            allow_long_fields,
         } => {
             let options = ucx_init::InitOptions {
                 name: name.clone(),
                 author,
                 language,
+                allow_long_fields,
             };
 
             ucx_init::init(&path, &options)?;

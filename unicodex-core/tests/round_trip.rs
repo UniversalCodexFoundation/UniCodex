@@ -27,6 +27,7 @@ fn test_full_round_trip() {
         name: "往返测试小说".to_string(),
         author: "测试作者".to_string(),
         language: "zh-CN".to_string(),
+        ..Default::default()
     };
 
     ucx_init::init(&project_dir, &init_options)
@@ -146,6 +147,7 @@ fn test_build_with_custom_options() {
             name: "自定义选项测试".to_string(),
             author: "作者".to_string(),
             language: "en".to_string(),
+            ..Default::default()
         },
     )
     .expect("init failed");
@@ -193,6 +195,7 @@ fn test_multi_chapter_build() {
             name: "多章节测试".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         },
     )
     .expect("init failed");
@@ -309,6 +312,7 @@ fn test_double_init_fails() {
         name: "第一次".to_string(),
         author: "作者".to_string(),
         language: "zh-CN".to_string(),
+        ..Default::default()
     };
 
     // First init should succeed.

@@ -18,6 +18,7 @@
 //!     name: "我的小说".to_string(),
 //!     author: "作者名".to_string(),
 //!     language: "zh-CN".to_string(),
+//!     allow_long_fields: false,
 //! };
 //! init(Path::new("./my-novel"), &options).unwrap();
 //! ```
@@ -119,6 +120,8 @@ pub enum InitError {
 /// - `name` — The title of the work (e.g., "我的小说"). / 作品标题。
 /// - `author` — The primary author's name. / 主要作者名称。
 /// - `language` — BCP 47 language tag (default: "zh-CN"). / BCP 47 语言标签。
+/// - `allow_long_fields` — Allow fields longer than 500 chars (default: false).
+///   允许超过 500 字符的字段（默认：false）。
 #[derive(Debug, Clone)]
 pub struct InitOptions {
     /// The title of the work.
@@ -132,6 +135,10 @@ pub struct InitOptions {
     /// The primary language of the work (BCP 47 tag, e.g., "zh-CN").
     /// 作品的主要语言（BCP 47 标签，如 "zh-CN"）。
     pub language: String,
+
+    /// Whether to allow fields longer than the default 500-character limit.
+    /// 是否允许超过默认 500 字符上限的字段。
+    pub allow_long_fields: bool,
 }
 
 impl Default for InitOptions {
@@ -143,6 +150,7 @@ impl Default for InitOptions {
             name: "无标题".to_string(),
             author: "未知".to_string(),
             language: "zh-CN".to_string(),
+            allow_long_fields: false,
         }
     }
 }
@@ -216,8 +224,8 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     // Step 0.5: Validate input options — reject empty or control-char inputs.
     // 步骤 0.5：验证输入选项 — 拒绝空值或含控制字符的输入。
     // -------------------------------------------------------------------------
-    validate_input(&options.name, "name")?;
-    validate_input(&options.author, "author")?;
+    validate_input(&options.name, "name", options.allow_long_fields)?;
+    validate_input(&options.author, "author", options.allow_long_fields)?;
 
     // -------------------------------------------------------------------------
     // Step 1: Check if the project already exists.
@@ -459,18 +467,39 @@ fn build_first_chapter() -> String {
 ///
 /// Rejects:
 /// - Empty strings or whitespace-only strings.
-/// - Strings containing ASCII control characters (U+0000–U+001F except common whitespace).
+/// - Strings containing ASCII control characters (U+0000–U+001F except tab).
+/// - Strings longer than 500 characters (unless `allow_long` is true).
 ///
 /// 验证用户输入的字符串。
 /// 拒绝：
 /// - 空字符串或仅含空白的字符串。
-/// - 包含 ASCII 控制字符的字符串（U+0000–U+001F，常见空白字符除外）。
-fn validate_input(value: &str, field_name: &str) -> Result<(), InitError> {
+/// - 包含 ASCII 控制字符的字符串（U+0000–U+001F，制表符除外）。
+/// - 超过 500 字符的字符串（除非 `allow_long` 为 true）。
+///
+/// # Arguments / 参数
+///
+/// * `value` - The input string to validate. / 要验证的输入字符串。
+/// * `field_name` - The field name for error messages. / 用于错误消息的字段名。
+/// * `allow_long` - Whether to skip the 500-char length limit. / 是否跳过 500 字符上限。
+fn validate_input(value: &str, field_name: &str, allow_long: bool) -> Result<(), InitError> {
+    // Maximum allowed length for input fields (default limit).
+    // 输入字段的最大允许长度（默认限制）。
+    const MAX_INPUT_LENGTH: usize = 500;
+
     // Reject empty or whitespace-only input.
     // 拒绝空或仅含空白的输入。
     if value.trim().is_empty() {
         return Err(InitError::InvalidInput(format!(
             "'{field_name}' must not be empty"
+        )));
+    }
+
+    // Reject strings exceeding the maximum length (unless allowed).
+    // 拒绝超过最大长度的字符串（除非允许）。
+    if !allow_long && value.len() > MAX_INPUT_LENGTH {
+        return Err(InitError::InvalidInput(format!(
+            "'{field_name}' exceeds maximum length of {MAX_INPUT_LENGTH} characters ({} given). Use --allow-long-fields to override",
+            value.len()
         )));
     }
 
@@ -516,6 +545,7 @@ mod tests {
             name: "测试小说".to_string(),
             author: "测试作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
 
         // Run initialization — should succeed.
@@ -580,6 +610,7 @@ mod tests {
             name: "重复项目".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
 
@@ -608,6 +639,7 @@ mod tests {
             name: "TOML测试小说".to_string(),
             author: "TOML作者".to_string(),
             language: "en".to_string(),
+            ..Default::default()
         };
         init(&project_dir, &options).expect("init failed");
 
@@ -662,6 +694,7 @@ mod tests {
             name: "结构测试".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         init(&project_dir, &options).expect("init failed");
 
@@ -731,6 +764,7 @@ mod tests {
             name: "".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
         assert!(result.is_err(), "should reject empty name");
@@ -752,6 +786,7 @@ mod tests {
             name: "书名".to_string(),
             author: "   ".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
         assert!(result.is_err(), "should reject whitespace-only author");
@@ -775,6 +810,7 @@ mod tests {
             name: "title\nnewline".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
         assert!(result.is_err(), "should reject LF in name");
@@ -789,6 +825,7 @@ mod tests {
             name: "书名".to_string(),
             author: "author\rnewline".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result_cr = init(&project_dir, &options_cr);
         assert!(result_cr.is_err(), "should reject CR in author");
@@ -810,6 +847,7 @@ mod tests {
             name: "bad\x00name".to_string(),
             author: "作者".to_string(),
             language: "zh-CN".to_string(),
+            ..Default::default()
         };
         let result = init(&project_dir, &options);
         assert!(result.is_err(), "should reject control character in name");
@@ -817,5 +855,43 @@ mod tests {
             matches!(result.unwrap_err(), InitError::InvalidInput(_)),
             "expected InvalidInput for control chars"
         );
+    }
+
+    /// Test (SEC-002): Initializing with an overlong name should fail.
+    ///
+    /// 测试（SEC-002）：name 超过 500 字符应失败。
+    #[test]
+    fn test_init_rejects_overlong_name() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("overlong-name");
+
+        // Create a name exceeding 500 characters.
+        // 创建一个超过 500 字符的名称。
+        let long_name = "a".repeat(501);
+        let options = InitOptions {
+            name: long_name,
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+            allow_long_fields: false,
+        };
+        let result = init(&project_dir, &options);
+        assert!(result.is_err(), "should reject overlong name");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("exceeds maximum length"),
+            "error should mention max length, got: {err_msg}"
+        );
+
+        // With allow_long_fields = true, should succeed.
+        // 启用 allow_long_fields 后应成功。
+        let long_name_ok = "b".repeat(501);
+        let options_ok = InitOptions {
+            name: long_name_ok,
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+            allow_long_fields: true,
+        };
+        let result_ok = init(&project_dir, &options_ok);
+        assert!(result_ok.is_ok(), "should allow overlong name with allow_long_fields");
     }
 }
