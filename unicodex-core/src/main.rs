@@ -80,6 +80,11 @@ enum Commands {
         /// 交互模式：逐项询问项目元数据。
         #[arg(short = 'i', long, default_value_t = false)]
         interactive: bool,
+
+        /// Initialize from existing .md files in the directory.
+        /// 从目录中现有的 .md 文件初始化。
+        #[arg(long, default_value_t = false)]
+        from_existing: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -204,6 +209,7 @@ fn main() -> anyhow::Result<()> {
             no_git,
             yes,
             interactive,
+            from_existing,
         } => {
             // Determine final name/author/language values.
             // In interactive mode, prompt for each value with CLI args as defaults.
@@ -254,8 +260,13 @@ fn main() -> anyhow::Result<()> {
                 no_git,
             };
 
-            ucx_init::init(&path, &options)?;
-            println!("UCX project initialized: \"{}\" at {}", final_name, path.display());
+            if from_existing {
+                ucx_init::init_from_existing(&path, &options)?;
+                println!("UCX project initialized from existing files: \"{}\" at {}", final_name, path.display());
+            } else {
+                ucx_init::init(&path, &options)?;
+                println!("UCX project initialized: \"{}\" at {}", final_name, path.display());
+            }
         }
 
         // =====================================================================

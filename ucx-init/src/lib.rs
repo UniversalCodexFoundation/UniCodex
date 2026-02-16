@@ -412,6 +412,186 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
 }
 
 // =============================================================================
+// init_from_existing — initialize from existing .md files
+// =============================================================================
+
+/// Initialize a UCX project from existing Markdown files.
+///
+/// Scans the given `path` for `.md` files, generates a `struct.json` from them,
+/// and creates `unicodex.toml`. Files are moved to `content/` if not already there.
+///
+/// 从现有 Markdown 文件初始化 UCX 项目。
+/// 扫描给定路径中的 `.md` 文件，据此生成 `struct.json`，
+/// 并创建 `unicodex.toml`。如果文件不在 `content/` 中则移入。
+///
+/// # Arguments / 参数
+///
+/// * `path` — Project root directory. / 项目根目录。
+/// * `options` — User-provided project metadata. / 用户提供的项目元数据。
+pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), InitError> {
+    info!(
+        path = %path.display(),
+        "Initializing UCX project from existing files / 从现有文件初始化 UCX 项目"
+    );
+
+    // Validate path — reject path traversal.
+    // 验证路径 — 拒绝路径遍历。
+    for component in path.components() {
+        if let std::path::Component::ParentDir = component {
+            return Err(InitError::PathTraversal(path.display().to_string()));
+        }
+    }
+
+    // Validate inputs.
+    // 验证输入。
+    validate_input(&options.name, "name", options.allow_long_fields)?;
+    validate_input(&options.author, "author", options.allow_long_fields)?;
+    validate_language_tag(&options.language)?;
+
+    // Check for existing unicodex.toml.
+    // 检查已存在的 unicodex.toml。
+    let config_path = path.join(CONFIG_FILE_NAME);
+    if config_path.exists() {
+        return Err(InitError::AlreadyExists(path.display().to_string()));
+    }
+
+    // Create content/ directory if it doesn't exist.
+    // 如果 content/ 不存在则创建。
+    let content_dir = path.join("content");
+    if !content_dir.exists() {
+        fs::create_dir_all(&content_dir)?;
+    }
+
+    // Scan for .md files in the project root (not recursing into subdirs).
+    // 扫描项目根目录下的 .md 文件（不递归子目录）。
+    let mut md_files: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_file() {
+                if let Some(ext) = entry_path.extension() {
+                    if ext == "md" {
+                        let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                        md_files.push(file_name);
+                    }
+                }
+            }
+        }
+    }
+    md_files.sort();
+
+    // Also scan content/ directory.
+    // 同时扫描 content/ 目录。
+    let mut content_md_files: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&content_dir) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_file() {
+                if let Some(ext) = entry_path.extension() {
+                    if ext == "md" {
+                        let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                        content_md_files.push(file_name);
+                    }
+                }
+            }
+        }
+    }
+    content_md_files.sort();
+
+    // Move root-level .md files into content/.
+    // 将根目录下的 .md 文件移入 content/。
+    for file_name in &md_files {
+        let src = path.join(file_name);
+        let dst = content_dir.join(file_name);
+        if !dst.exists() {
+            fs::rename(&src, &dst)?;
+            info!(
+                file = %file_name,
+                "Moved to content/ / 已移入 content/"
+            );
+        }
+    }
+
+    // Build the combined file list (files now in content/).
+    // 构建合并后的文件列表（文件现在都在 content/ 中）。
+    let mut all_files: Vec<String> = content_md_files.clone();
+    for f in &md_files {
+        if !all_files.contains(f) {
+            all_files.push(f.clone());
+        }
+    }
+    all_files.sort();
+
+    // Generate structure nodes from file names.
+    // 从文件名生成结构节点。
+    let structure_nodes: Vec<StructureNode> = all_files.iter().map(|file_name| {
+        // Infer title from file name: remove extension, replace - and _ with spaces.
+        // 从文件名推断标题：去掉扩展名，用空格替换 - 和 _。
+        let title = file_name
+            .trim_end_matches(".md")
+            .replace(['-', '_'], " ");
+        StructureNode {
+            title,
+            file: Some(file_name.clone()),
+            children: None,
+            node_type: None,
+            id: None,
+            name: None,
+            style: None,
+            encryption: None,
+        }
+    }).collect();
+
+    // Generate UCX ID and project config.
+    // 生成 UCX ID 和项目配置。
+    let ucx_id = UcxId::new();
+    let project_config = build_project_config(&ucx_id, options);
+    let mut toml_content = toml::to_string_pretty(&project_config)?;
+    toml_content.push_str(r#"
+# --- 以下为可选配置段示例（取消注释即可启用） ---
+
+# [series]
+# name = "系列名称"
+# index = 1
+# total = 5
+"#);
+    fs::write(&config_path, &toml_content)?;
+
+    // Write struct.json.
+    // 写入 struct.json。
+    let structure = Structure {
+        schema: Some(STRUCT_SCHEMA_URL.to_string()),
+        version: "1.0".to_string(),
+        structure: structure_nodes,
+    };
+    let struct_json = serde_json::to_string_pretty(&structure)?;
+    let struct_path = content_dir.join(STRUCT_FILE_NAME);
+    fs::write(&struct_path, &struct_json)?;
+
+    // Git init (unless --no-git).
+    // Git 初始化（除非 --no-git）。
+    if !options.no_git {
+        match git2::Repository::init(path) {
+            Ok(_) => {
+                let gitignore_content = "dist/\n*.ucx\ntarget/\n";
+                fs::write(path.join(".gitignore"), gitignore_content)?;
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to initialize Git repository");
+            }
+        }
+    }
+
+    info!(
+        path = %path.display(),
+        files = all_files.len(),
+        "UCX project initialized from existing files / 从现有文件初始化 UCX 项目完成"
+    );
+
+    Ok(())
+}
+
+// =============================================================================
 // Internal helpers / 内部辅助函数
 // =============================================================================
 
@@ -1122,5 +1302,49 @@ mod tests {
         assert!(gitignore.contains("dist/"), ".gitignore should ignore dist/");
         assert!(gitignore.contains("*.ucx"), ".gitignore should ignore *.ucx");
         assert!(gitignore.contains("target/"), ".gitignore should ignore target/");
+    }
+
+    /// Test (SUG-002): init_from_existing should create project from existing .md files.
+    ///
+    /// 测试（SUG-002）：init_from_existing 应从现有 .md 文件创建项目。
+    #[test]
+    fn test_init_from_existing() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("existing-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Create some .md files in the project root.
+        // 在项目根目录下创建一些 .md 文件。
+        fs::write(project_dir.join("intro.md"), "# 引言\n\n引言内容。\n").unwrap();
+        fs::write(project_dir.join("chapter-01.md"), "# 第一章\n\n第一章内容。\n").unwrap();
+        fs::write(project_dir.join("chapter-02.md"), "# 第二章\n\n第二章内容。\n").unwrap();
+
+        let options = InitOptions {
+            name: "现有项目".to_string(),
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+            no_git: true, // Skip git for test speed.
+            ..Default::default()
+        };
+        let result = init_from_existing(&project_dir, &options);
+        assert!(result.is_ok(), "init_from_existing should succeed: {:?}", result.err());
+
+        // Verify unicodex.toml exists.
+        // 验证 unicodex.toml 存在。
+        assert!(project_dir.join("unicodex.toml").is_file());
+
+        // Verify .md files were moved to content/.
+        // 验证 .md 文件已移入 content/。
+        assert!(project_dir.join("content/intro.md").is_file());
+        assert!(project_dir.join("content/chapter-01.md").is_file());
+        assert!(project_dir.join("content/chapter-02.md").is_file());
+
+        // Verify struct.json was created with 3 entries.
+        // 验证 struct.json 已创建且包含 3 个条目。
+        let struct_path = project_dir.join("content/struct.json");
+        assert!(struct_path.is_file());
+        let struct_content = fs::read_to_string(&struct_path).unwrap();
+        let structure: Structure = serde_json::from_str(&struct_content).unwrap();
+        assert_eq!(structure.structure.len(), 3, "should have 3 chapters from .md files");
     }
 }
