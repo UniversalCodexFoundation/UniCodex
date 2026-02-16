@@ -70,6 +70,11 @@ enum Commands {
         /// 跳过 Git 仓库初始化。
         #[arg(long, default_value_t = false)]
         no_git: bool,
+
+        /// Skip confirmation prompt for non-empty directories.
+        /// 跳过非空目录确认提示。
+        #[arg(short = 'y', long, default_value_t = false)]
+        yes: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -192,7 +197,36 @@ fn main() -> anyhow::Result<()> {
             allow_long_fields,
             full,
             no_git,
+            yes,
         } => {
+            // Check if initializing in a non-empty directory without unicodex.toml.
+            // 检查是否在非空目录中初始化（且不存在 unicodex.toml）。
+            if path == std::path::Path::new(".") && !yes {
+                let has_unicodex_toml = path.join("unicodex.toml").exists();
+                if !has_unicodex_toml {
+                    // Check if directory is non-empty.
+                    // 检查目录是否非空。
+                    let is_non_empty = path.read_dir()
+                        .map(|mut d| d.next().is_some())
+                        .unwrap_or(false);
+                    if is_non_empty {
+                        eprintln!("Warning: current directory is not empty.");
+                        eprint!("Continue initializing UCX project here? [y/N] ");
+                        let mut input = String::new();
+                        if std::io::stdin().read_line(&mut input).is_ok() {
+                            let answer = input.trim().to_lowercase();
+                            if answer != "y" && answer != "yes" {
+                                println!("Aborted.");
+                                return Ok(());
+                            }
+                        } else {
+                            // Non-interactive environment: proceed by default.
+                            // 非交互环境：默认继续。
+                        }
+                    }
+                }
+            }
+
             let options = ucx_init::InitOptions {
                 name: name.clone(),
                 author,
