@@ -109,6 +109,11 @@ enum Commands {
         /// 强制覆盖，不提示确认。
         #[arg(short = 'f', long, default_value_t = false)]
         force: bool,
+
+        /// Dry-run mode: validate and preview without creating the archive.
+        /// 预演模式：仅校验和预览，不创建归档文件。
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 
     /// Display information about a UCX file.
@@ -283,7 +288,31 @@ fn main() -> anyhow::Result<()> {
             output_dir,
             output_name,
             force,
+            dry_run,
         } => {
+            // Dry-run mode: validate project and print what would be packed.
+            // 预演模式：校验项目并打印将会打包的内容。
+            if dry_run {
+                let options = ucx_build::BuildOptions {
+                    output_dir,
+                    output_name,
+                    dry_run: true,
+                };
+                let result = ucx_build::dry_run(&path, &options)?;
+                println!("=== Dry Run ===");
+                println!("Output: {}", result.output_path.display());
+                println!();
+                println!("Files ({}):", result.files.len());
+                for file in &result.files {
+                    println!("  {} ({} bytes)", file.archive_path, file.size);
+                }
+                println!();
+                println!("Total size: {} bytes", result.total_size);
+                println!();
+                println!("Validation passed. Ready to build.");
+                return Ok(());
+            }
+
             // Pre-check: if the output file already exists and --force not specified,
             // prompt the user for confirmation.
             // 预检查：如果输出文件已存在且未指定 --force，提示用户确认。
@@ -292,6 +321,7 @@ fn main() -> anyhow::Result<()> {
                 &ucx_build::BuildOptions {
                     output_dir: output_dir.clone(),
                     output_name: output_name.clone(),
+                    ..Default::default()
                 },
             );
             if let Ok(ref out_path) = expected_output {
@@ -312,6 +342,7 @@ fn main() -> anyhow::Result<()> {
             let options = ucx_build::BuildOptions {
                 output_dir,
                 output_name,
+                ..Default::default()
             };
 
             let ucx_path = ucx_build::build(&path, &options)?;

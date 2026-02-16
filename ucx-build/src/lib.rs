@@ -18,6 +18,7 @@
 //! let options = BuildOptions {
 //!     output_dir: None,   // defaults to "dist" / 默认 "dist"
 //!     output_name: None,  // defaults to project dir name / 默认为项目目录名
+//!     ..Default::default()
 //! };
 //! let ucx_path = build(Path::new("./my-novel"), &options).unwrap();
 //! println!("Built: {}", ucx_path.display());
@@ -93,6 +94,8 @@ pub enum BuildError {
 ///   输出文件的基本名称，不含 `.ucx` 扩展名。
 ///   If `None`, uses the project directory name.
 ///   如果为 `None`，使用项目目录名称。
+/// - `dry_run` — If `true`, validate only; do not create the `.ucx` file.
+///   如果为 `true`，仅执行校验，不创建 `.ucx` 文件。
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     /// Output directory path (default: "dist" relative to project root).
@@ -102,6 +105,49 @@ pub struct BuildOptions {
     /// Output file name without the `.ucx` extension.
     /// 输出文件名（不含 `.ucx` 扩展名）。
     pub output_name: Option<String>,
+
+    /// Dry-run mode: validate project without creating the archive.
+    /// 预演模式：仅校验项目，不创建归档文件。
+    pub dry_run: bool,
+}
+
+// =============================================================================
+// DryRunResult / 预演结果
+// =============================================================================
+
+/// Result of a dry-run build — project validation without archive creation.
+///
+/// Contains the information that *would* be used for a real build.
+///
+/// 预演构建的结果 — 仅校验项目，不创建归档。
+/// 包含实际构建中*将会*使用的信息。
+#[derive(Debug)]
+pub struct DryRunResult {
+    /// The output path where the `.ucx` file *would* be created.
+    /// `.ucx` 文件*将会*被创建的输出路径。
+    pub output_path: PathBuf,
+
+    /// List of files that *would* be included in the archive.
+    /// *将会*被包含在归档中的文件列表。
+    pub files: Vec<DryRunFile>,
+
+    /// Total size in bytes of all files to be packed.
+    /// 所有待打包文件的总大小（字节）。
+    pub total_size: u64,
+}
+
+/// A single file entry in a dry-run result.
+///
+/// 预演结果中的单个文件条目。
+#[derive(Debug)]
+pub struct DryRunFile {
+    /// Path inside the ZIP archive (e.g., "content/chapter-001.md").
+    /// ZIP 归档内的路径（如 "content/chapter-001.md"）。
+    pub archive_path: String,
+
+    /// Size in bytes on disk.
+    /// 磁盘上的文件大小（字节）。
+    pub size: u64,
 }
 
 // =============================================================================
@@ -214,6 +260,18 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     let output_name = resolve_output_name(project_path, &config, options);
     let output_path = output_dir.join(format!("{output_name}.ucx"));
 
+    // -------------------------------------------------------------------------
+    // Dry-run mode: return result without creating archive.
+    // 预演模式：返回结果但不创建归档文件。
+    // -------------------------------------------------------------------------
+    if options.dry_run {
+        info!(
+            path = %output_path.display(),
+            "Dry-run: would output to / 预演：将输出到"
+        );
+        return Ok(output_path);
+    }
+
     // Create output directory if it does not exist.
     // 如果输出目录不存在则创建。
     if !output_dir.exists() {
@@ -263,6 +321,76 @@ pub fn resolve_output_path(project_path: &Path, options: &BuildOptions) -> Resul
     let output_dir = resolve_output_dir(project_path, &config, options);
     let output_name = resolve_output_name(project_path, &config, options);
     Ok(output_dir.join(format!("{output_name}.ucx")))
+}
+
+/// Perform a dry-run build: validate the project and report what *would* be packed.
+///
+/// Runs Steps 1–4 of the normal build process (read config, validate structure,
+/// collect files), then returns a [`DryRunResult`] without creating the archive.
+///
+/// 执行预演构建：校验项目并报告*将会*打包的内容。
+/// 运行正常构建的步骤 1–4（读取配置、校验结构、收集文件），
+/// 然后返回 [`DryRunResult`] 而不创建归档。
+pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResult, BuildError> {
+    // Step 1: Read and parse unicodex.toml.
+    // 步骤 1：读取并解析 unicodex.toml。
+    let config_path = project_path.join("unicodex.toml");
+    if !config_path.exists() {
+        return Err(BuildError::ConfigNotFound(
+            config_path.display().to_string(),
+        ));
+    }
+    let toml_content = fs::read_to_string(&config_path)?;
+    let config: ucx_types::ProjectConfig =
+        toml::from_str(&toml_content).map_err(|e| BuildError::ConfigParse(e.to_string()))?;
+
+    // Step 2: Convert config (to validate metadata).
+    // 步骤 2：转换配置（以校验元数据）。
+    let _codex = convert::config_to_codex(&config);
+
+    // Step 3: Read and validate struct.json.
+    // 步骤 3：读取并校验 struct.json。
+    let struct_path = project_path.join("content").join("struct.json");
+    if !struct_path.exists() {
+        return Err(BuildError::InvalidStructure(
+            "content/struct.json not found — this file is required for building".to_string(),
+        ));
+    }
+    let struct_content = fs::read_to_string(&struct_path)?;
+    let structure: ucx_types::Structure = serde_json::from_str(&struct_content)
+        .map_err(|e| BuildError::ConfigParse(format!("struct.json parse error: {e}")))?;
+
+    validate_structure_nodes(&structure.structure)?;
+    validate_file_references(&structure.structure, &project_path.join("content"))?;
+
+    // Step 4: Collect files and compute sizes.
+    // 步骤 4：收集文件并计算大小。
+    let collected_files = archive::collect_project_files(project_path)?;
+    let mut files = Vec::with_capacity(collected_files.len());
+    let mut total_size: u64 = 0;
+
+    for cf in &collected_files {
+        let size = fs::metadata(&cf.disk_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        total_size += size;
+        files.push(DryRunFile {
+            archive_path: cf.archive_path.clone(),
+            size,
+        });
+    }
+
+    // Determine output path.
+    // 确定输出路径。
+    let output_dir = resolve_output_dir(project_path, &config, options);
+    let output_name = resolve_output_name(project_path, &config, options);
+    let output_path = output_dir.join(format!("{output_name}.ucx"));
+
+    Ok(DryRunResult {
+        output_path,
+        files,
+        total_size,
+    })
 }
 
 // =============================================================================
@@ -646,6 +774,7 @@ language = "zh-CN"
         let options = BuildOptions {
             output_dir: Some(custom_out.clone()),
             output_name: Some("my-book".to_string()),
+            ..Default::default()
         };
 
         let result = build(&project_dir, &options);

@@ -158,6 +158,7 @@ fn test_build_with_custom_options() {
     let options = ucx_build::BuildOptions {
         output_dir: Some(custom_output.clone()),
         output_name: Some("my-custom-book".to_string()),
+        ..Default::default()
     };
 
     let ucx_path = ucx_build::build(&project_dir, &options)
