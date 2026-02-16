@@ -75,6 +75,11 @@ enum Commands {
         /// 跳过非空目录确认提示。
         #[arg(short = 'y', long, default_value_t = false)]
         yes: bool,
+
+        /// Interactive mode: prompt for project metadata.
+        /// 交互模式：逐项询问项目元数据。
+        #[arg(short = 'i', long, default_value_t = false)]
+        interactive: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -198,7 +203,20 @@ fn main() -> anyhow::Result<()> {
             full,
             no_git,
             yes,
+            interactive,
         } => {
+            // Determine final name/author/language values.
+            // In interactive mode, prompt for each value with CLI args as defaults.
+            // 确定最终的 name/author/language 值。
+            // 交互模式下，逐项询问，CLI 参数作为默认值显示。
+            let (final_name, final_author, final_language) = if interactive {
+                let n = prompt_with_default("作品标题", &name);
+                let a = prompt_with_default("作者名", &author);
+                let l = prompt_with_default("语言标签 (BCP 47)", &language);
+                (n, a, l)
+            } else {
+                (name.clone(), author.clone(), language.clone())
+            };
             // Check if initializing in a non-empty directory without unicodex.toml.
             // 检查是否在非空目录中初始化（且不存在 unicodex.toml）。
             if path == std::path::Path::new(".") && !yes {
@@ -228,16 +246,16 @@ fn main() -> anyhow::Result<()> {
             }
 
             let options = ucx_init::InitOptions {
-                name: name.clone(),
-                author,
-                language,
+                name: final_name.clone(),
+                author: final_author,
+                language: final_language,
                 allow_long_fields,
                 full,
                 no_git,
             };
 
             ucx_init::init(&path, &options)?;
-            println!("UCX project initialized: \"{}\" at {}", name, path.display());
+            println!("UCX project initialized: \"{}\" at {}", final_name, path.display());
         }
 
         // =====================================================================
@@ -395,6 +413,29 @@ fn main() -> anyhow::Result<()> {
 // =============================================================================
 // Helper functions / 辅助函数
 // =============================================================================
+
+/// Prompt the user for input with a default value shown in brackets.
+///
+/// Returns the user's input, or the default if they press Enter.
+///
+/// 提示用户输入，括号中显示默认值。
+/// 返回用户输入，或按 Enter 时返回默认值。
+fn prompt_with_default(label: &str, default: &str) -> String {
+    use std::io::Write;
+    eprint!("{label} [{default}]: ");
+    std::io::stderr().flush().ok();
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            default.to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        default.to_string()
+    }
+}
 
 /// Recursively print the content structure tree with indentation.
 ///
