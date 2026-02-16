@@ -43,12 +43,12 @@ enum Commands {
 
         /// Work title.
         /// 作品标题。
-        #[arg(short, long, default_value = "Untitled")]
+        #[arg(short, long, default_value = "无标题")]
         name: String,
 
         /// Primary author name.
         /// 主要作者名称。
-        #[arg(short, long, default_value = "Unknown")]
+        #[arg(short, long, default_value = "未知")]
         author: String,
 
         /// Primary language (BCP 47 tag, e.g., "zh-CN", "en").

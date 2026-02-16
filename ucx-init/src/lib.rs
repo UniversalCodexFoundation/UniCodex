@@ -135,13 +135,13 @@ pub struct InitOptions {
 }
 
 impl Default for InitOptions {
-    /// Create default options with placeholder values.
+    /// Create default options with localized placeholder values.
     ///
-    /// 使用占位值创建默认选项。
+    /// 使用本地化占位值创建默认选项。
     fn default() -> Self {
         Self {
-            name: "Untitled".to_string(),
-            author: "Unknown".to_string(),
+            name: "无标题".to_string(),
+            author: "未知".to_string(),
             language: "zh-CN".to_string(),
         }
     }
