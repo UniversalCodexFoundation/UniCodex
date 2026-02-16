@@ -226,6 +226,7 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     // -------------------------------------------------------------------------
     validate_input(&options.name, "name", options.allow_long_fields)?;
     validate_input(&options.author, "author", options.allow_long_fields)?;
+    validate_language_tag(&options.language)?;
 
     // -------------------------------------------------------------------------
     // Step 1: Check if the project already exists.
@@ -515,6 +516,52 @@ fn validate_input(value: &str, field_name: &str, allow_long: bool) -> Result<(),
         return Err(InitError::InvalidInput(format!(
             "'{field_name}' contains a control character at position {pos}"
         )));
+    }
+
+    Ok(())
+}
+
+/// Validate a BCP 47 language tag.
+///
+/// Performs basic format validation:
+/// - 2-3 letter primary language subtag
+/// - Optional hyphen-separated subtags (1-8 alphanumeric characters each)
+/// - Examples: "zh-CN", "en", "en-US", "ja", "zh-Hant-TW"
+///
+/// 验证 BCP 47 语言标签。
+/// 执行基本格式校验：
+/// - 2-3 字母主语言子标签
+/// - 可选的连字符分隔子标签（每个 1-8 字母数字）
+/// - 示例："zh-CN"、"en"、"en-US"、"ja"、"zh-Hant-TW"
+fn validate_language_tag(tag: &str) -> Result<(), InitError> {
+    // Split by hyphen to get subtags.
+    // 按连字符分割获取子标签。
+    let parts: Vec<&str> = tag.split('-').collect();
+
+    // The primary language subtag must be 2-3 ASCII letters.
+    // 主语言子标签必须是 2-3 个 ASCII 字母。
+    if parts.is_empty() {
+        return Err(InitError::InvalidInput(
+            "language tag must not be empty".to_string(),
+        ));
+    }
+
+    let primary = parts[0];
+    if primary.len() < 2 || primary.len() > 3 || !primary.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(InitError::InvalidInput(format!(
+            "invalid BCP 47 language tag '{tag}': primary subtag must be 2-3 letters (e.g., 'zh', 'en')"
+        )));
+    }
+
+    // Each subsequent subtag must be 1-8 alphanumeric characters.
+    // 每个后续子标签必须是 1-8 个字母数字字符。
+    for (i, part) in parts.iter().enumerate().skip(1) {
+        if part.is_empty() || part.len() > 8 || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(InitError::InvalidInput(format!(
+                "invalid BCP 47 language tag '{tag}': subtag {} ('{}') must be 1-8 alphanumeric characters",
+                i + 1, part
+            )));
+        }
     }
 
     Ok(())
@@ -893,5 +940,41 @@ mod tests {
         };
         let result_ok = init(&project_dir, &options_ok);
         assert!(result_ok.is_ok(), "should allow overlong name with allow_long_fields");
+    }
+
+    /// Test (UX-002): Invalid BCP 47 language tags should be rejected.
+    ///
+    /// 测试（UX-002）：无效的 BCP 47 语言标签应被拒绝。
+    #[test]
+    fn test_init_rejects_invalid_language_tag() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+
+        // Valid tags should succeed.
+        // 有效标签应成功。
+        for valid_tag in &["zh-CN", "en", "en-US", "ja", "zh-Hant-TW", "de"] {
+            let project_dir = tmp.path().join(format!("valid-lang-{valid_tag}"));
+            let options = InitOptions {
+                name: "测试".to_string(),
+                author: "作者".to_string(),
+                language: valid_tag.to_string(),
+                ..Default::default()
+            };
+            let result = init(&project_dir, &options);
+            assert!(result.is_ok(), "should accept valid language tag: {valid_tag}");
+        }
+
+        // Invalid tags should fail.
+        // 无效标签应失败。
+        for invalid_tag in &["", "x", "toolong", "zh_CN", "en-", "123"] {
+            let project_dir = tmp.path().join(format!("invalid-lang-{invalid_tag}"));
+            let options = InitOptions {
+                name: "测试".to_string(),
+                author: "作者".to_string(),
+                language: invalid_tag.to_string(),
+                ..Default::default()
+            };
+            let result = init(&project_dir, &options);
+            assert!(result.is_err(), "should reject invalid language tag: '{invalid_tag}'");
+        }
     }
 }
