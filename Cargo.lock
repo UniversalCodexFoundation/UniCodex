@@ -1552,6 +1552,8 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1560,6 +1562,7 @@ dependencies = [
  "ucx-init",
  "ucx-parse",
  "ucx-sign",
+ "ucx-types",
  "ucx-verify",
  "ucx-version",
 ]

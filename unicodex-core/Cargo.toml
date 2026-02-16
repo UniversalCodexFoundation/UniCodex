@@ -29,6 +29,7 @@ path = "src/main.rs"
 # --- Internal modules / 内部模块 ---
 # The CLI entry depends on ALL feature modules.
 # CLI 入口依赖所有功能模块。
+ucx-types   = { workspace = true }
 ucx-init    = { workspace = true }
 ucx-build   = { workspace = true }
 ucx-parse   = { workspace = true }
@@ -53,3 +54,8 @@ tokio = { workspace = true }
 # --- Logging / 日志 ---
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+# --- Testing / 测试 ---
+tempfile = { workspace = true }           # Temporary directories for integration tests / 集成测试用临时目录
+serde_json = { workspace = true }         # JSON serialization for test data / 测试数据 JSON 序列化
