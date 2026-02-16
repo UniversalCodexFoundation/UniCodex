@@ -475,11 +475,13 @@ fn validate_input(value: &str, field_name: &str) -> Result<(), InitError> {
     }
 
     // Reject strings containing control characters (U+0000–U+001F),
-    // except for common whitespace: tab (\t), newline (\n), carriage return (\r).
+    // except for tab (\t). Newline (\n) and carriage return (\r) are also
+    // rejected because name/author fields should be single-line values.
     // 拒绝包含控制字符（U+0000–U+001F）的字符串，
-    // 常见空白字符除外：制表符 (\t)、换行符 (\n)、回车符 (\r)。
+    // 制表符 (\t) 除外。换行符 (\n) 和回车符 (\r) 也被拒绝，
+    // 因为 name/author 字段应为单行值。
     if let Some(pos) = value.chars().position(|c| {
-        c.is_control() && c != '\t' && c != '\n' && c != '\r'
+        c.is_control() && c != '\t'
     }) {
         return Err(InitError::InvalidInput(format!(
             "'{field_name}' contains a control character at position {pos}"
@@ -756,6 +758,43 @@ mod tests {
         assert!(
             matches!(result.unwrap_err(), InitError::InvalidInput(_)),
             "expected InvalidInput for whitespace-only author"
+        );
+    }
+
+    /// Test (NEW-001): Initializing with newline in name should fail.
+    ///
+    /// 测试（NEW-001）：name 中包含换行符应失败。
+    #[test]
+    fn test_init_rejects_newline_in_name() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("newline-name");
+
+        // Test LF (\n) in name.
+        // 测试 name 中的 LF (\n)。
+        let options = InitOptions {
+            name: "title\nnewline".to_string(),
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+        };
+        let result = init(&project_dir, &options);
+        assert!(result.is_err(), "should reject LF in name");
+        assert!(
+            matches!(result.unwrap_err(), InitError::InvalidInput(_)),
+            "expected InvalidInput for LF in name"
+        );
+
+        // Test CR (\r) in author.
+        // 测试 author 中的 CR (\r)。
+        let options_cr = InitOptions {
+            name: "书名".to_string(),
+            author: "author\rnewline".to_string(),
+            language: "zh-CN".to_string(),
+        };
+        let result_cr = init(&project_dir, &options_cr);
+        assert!(result_cr.is_err(), "should reject CR in author");
+        assert!(
+            matches!(result_cr.unwrap_err(), InitError::InvalidInput(_)),
+            "expected InvalidInput for CR in author"
         );
     }
 
