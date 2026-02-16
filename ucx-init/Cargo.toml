@@ -1,0 +1,30 @@
+# =============================================================================
+# ucx-init — Project initialization module
+# =============================================================================
+# Creates new UCX project directories, generates `unicodex.toml` config,
+# scaffolds standard directory structure, and assigns UCX ID.
+#
+# 创建新的 UCX 项目目录，生成 `unicodex.toml` 配置，
+# 搭建标准目录结构，并分配 UCX ID。
+# =============================================================================
+
+[package]
+name = "ucx-init"
+description = "UCX project initialization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }

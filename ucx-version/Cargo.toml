@@ -1,0 +1,35 @@
+# =============================================================================
+# ucx-version — Version management module (git2-based)
+# =============================================================================
+# Manages UCX file versioning using the recommended 卷.章.修订 scheme.
+# Detects changes via git2 (libgit2 Rust bindings) and automatically
+# generates version numbers. Falls back to file snapshot diff when
+# no Git repository is available.
+#
+# 管理 UCX 文件版本，使用推荐的 卷.章.修订 版本方案。
+# 通过 git2（libgit2 Rust 绑定）检测变更并自动生成版本号。
+# 无 Git 仓库时回退为文件快照 diff。
+# =============================================================================
+
+[package]
+name = "ucx-version"
+description = "UCX version management with git2-based change detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Version control / 版本控制 ---
+git2 = { workspace = true }
+
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }

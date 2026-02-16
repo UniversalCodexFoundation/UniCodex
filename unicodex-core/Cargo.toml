@@ -1,0 +1,55 @@
+# =============================================================================
+# unicodex-core — CLI entry point for the UCX tool
+# =============================================================================
+# This crate is the unified CLI entry that depends on all ucx-* feature modules.
+# It compiles into the `ucx` binary. It contains NO business logic itself;
+# each subcommand delegates to the corresponding module's public API.
+#
+# 本 crate 是统一的 CLI 入口，依赖所有 ucx-* 功能模块。
+# 编译产物为 `ucx` 命令。自身不包含业务逻辑，
+# 每个子命令都代理到对应模块的公开 API。
+# =============================================================================
+
+[package]
+name = "unicodex-core"
+description = "Unicodex CLI — unified novel file standard tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The compiled binary is named `ucx`.
+# 编译产物命名为 `ucx`。
+[[bin]]
+name = "ucx"
+path = "src/main.rs"
+
+[dependencies]
+# --- Internal modules / 内部模块 ---
+# The CLI entry depends on ALL feature modules.
+# CLI 入口依赖所有功能模块。
+ucx-init    = { workspace = true }
+ucx-build   = { workspace = true }
+ucx-parse   = { workspace = true }
+ucx-verify  = { workspace = true }
+ucx-sign    = { workspace = true }
+ucx-version = { workspace = true }
+ucx-crypto  = { workspace = true }
+
+# --- CLI framework / 命令行框架 ---
+clap = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+# CLI uses `anyhow` for ergonomic error propagation.
+# CLI 层使用 `anyhow` 进行便捷的错误传播。
+anyhow = { workspace = true }
+
+# --- Async runtime / 异步运行时 ---
+# Required for network-related subcommands (chain verify, key fetch, etc.).
+# 网络相关子命令需要异步运行时。
+tokio = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

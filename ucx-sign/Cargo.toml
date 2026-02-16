@@ -1,0 +1,39 @@
+# =============================================================================
+# ucx-sign — Signing & certificate management
+# =============================================================================
+# Generates digital signatures for UCX files using the dual-layer system:
+# - Layer 1: JAR-style (MANIFEST.MF → SF → RSA/EC)
+# - Layer 2: APK v2-style global signing block
+# Also manages certificates, multi-signer workflows, and key generation.
+#
+# 为 UCX 文件生成数字签名（双层体系）：
+# - Layer 1: JAR 式（MANIFEST.MF → SF → RSA/EC）
+# - Layer 2: APK v2 式全局签名块
+# 同时管理证书、多签名者工作流和密钥生成。
+# =============================================================================
+
+[package]
+name = "ucx-sign"
+description = "UCX digital signing and certificate management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Hashing / 哈希 ---
+blake3 = { workspace = true }
+
+# --- Cryptography / 密码学 ---
+ed25519-dalek = { workspace = true }
+
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }

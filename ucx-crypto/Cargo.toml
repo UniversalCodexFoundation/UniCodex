@@ -1,0 +1,37 @@
+# =============================================================================
+# ucx-crypto — Encryption & decryption module
+# =============================================================================
+# Provides chapter-level, resource-level, and paragraph-level encryption
+# for UCX files. Supports AES-256-GCM (recommended), ChaCha20-Poly1305,
+# and AES-256-CBC with HMAC-SHA256. Handles UCXE binary format,
+# key derivation (Argon2id / PBKDF2), and chunked encryption for large files.
+#
+# 为 UCX 文件提供章节级、资源级和段落级加密。
+# 支持 AES-256-GCM（推荐）、ChaCha20-Poly1305 和 AES-256-CBC + HMAC-SHA256。
+# 处理 UCXE 二进制格式、密钥派生（Argon2id / PBKDF2）和大文件分块加密。
+# =============================================================================
+
+[package]
+name = "ucx-crypto"
+description = "UCX encryption and decryption"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }
+
+# NOTE: Cryptographic dependencies (aes-gcm, chacha20poly1305, argon2, etc.)
+# will be added when implementation begins in Phase 2.
+# 注意：密码学依赖（aes-gcm、chacha20poly1305、argon2 等）
+# 将在 Phase 2 开始实现时添加。

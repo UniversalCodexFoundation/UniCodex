@@ -1,0 +1,98 @@
+# =============================================================================
+# Unicodex Workspace Configuration
+# =============================================================================
+# Root Cargo.toml for the Unicodex workspace.
+# All Rust modules are managed here with unified version and dependency control.
+#
+# Unicodex 工作区根配置。
+# 所有 Rust 模块在此统一管理版本和依赖。
+# =============================================================================
+
+[workspace]
+# Use the v2 resolver for better feature unification.
+# 使用 v2 解析器以获得更好的 feature 统一行为。
+resolver = "2"
+members = [
+    # --- Core CLI entry point / 核心 CLI 入口 ---
+    "unicodex-core",
+
+    # --- Feature modules / 功能模块 ---
+    "ucx-init",          # Project initialization / 项目初始化
+    "ucx-build",         # Build & pack UCX files / 构建打包 UCX 文件
+    "ucx-parse",         # Parse & read UCX files / 解析读取 UCX 文件
+    "ucx-verify",        # Signature & integrity verification / 签名与完整性验证
+    "ucx-sign",          # Signing & certificate management / 签名与证书管理
+    "ucx-version",       # Version management (git2-based) / 版本管理（基于 git2）
+    "ucx-crypto",        # Encryption & decryption / 加密与解密
+
+    # --- Extension modules (planned) / 扩展模块（预留） ---
+    # "ucx-audio-book",  # Audio book extension / 有声书扩展
+    # "ucx-interactive", # Interactive fiction extension / 互动小说扩展
+]
+
+# =============================================================================
+# Shared package metadata / 共享包元数据
+# =============================================================================
+# All workspace members inherit these values via `field.workspace = true`.
+# 所有工作区成员通过 `field.workspace = true` 继承这些值。
+# =============================================================================
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/unicodex/unicodex"
+authors = ["Unicodex Contributors"]
+rust-version = "1.75"
+
+# =============================================================================
+# Shared dependencies / 共享依赖
+# =============================================================================
+# All dependencies are declared here with pinned versions.
+# Workspace members reference them via `dep.workspace = true`.
+#
+# 所有依赖在此声明并锁定版本。
+# 工作区成员通过 `dep.workspace = true` 引用。
+# =============================================================================
+[workspace.dependencies]
+
+# --- Internal crates / 内部 crate ---
+# These allow cross-module references within the workspace.
+# 用于工作区内模块间的互相引用。
+ucx-init    = { path = "ucx-init" }
+ucx-build   = { path = "ucx-build" }
+ucx-parse   = { path = "ucx-parse" }
+ucx-verify  = { path = "ucx-verify" }
+ucx-sign    = { path = "ucx-sign" }
+ucx-version = { path = "ucx-version" }
+ucx-crypto  = { path = "ucx-crypto" }
+
+# --- Hashing / 哈希 ---
+blake3 = "1.5"                                       # High-performance hash function / 高性能哈希函数
+
+# --- Cryptography / 密码学 ---
+ed25519-dalek = "2.1"                                # Ed25519 signatures / Ed25519 签名
+
+# --- Archive / 归档 ---
+zip = "2.6"                                          # ZIP archive operations / ZIP 归档操作
+
+# --- Version control / 版本控制 ---
+git2 = "0.19"                                        # libgit2 Rust bindings / libgit2 的 Rust 绑定
+
+# --- Serialization / 序列化 ---
+serde = { version = "1.0", features = ["derive"] }   # Serialization framework / 序列化框架
+serde_json = "1.0"                                   # JSON support / JSON 支持
+toml = "0.8"                                         # TOML support / TOML 支持
+
+# --- Error handling / 错误处理 ---
+thiserror = "2.0"                                    # Library error types / 库错误类型定义
+anyhow = "1.0"                                       # Application error handling / 应用级错误处理
+
+# --- CLI / 命令行 ---
+clap = { version = "4.5", features = ["derive"] }    # CLI argument parsing / 命令行参数解析
+
+# --- Async runtime / 异步运行时 ---
+tokio = { version = "1.43", features = ["full"] }    # Async runtime for network ops / 异步运行时（网络操作）
+
+# --- Logging / 日志 ---
+tracing = "0.1"                                      # Structured logging / 结构化日志
+tracing-subscriber = "0.3"                           # Log output formatting / 日志输出格式化

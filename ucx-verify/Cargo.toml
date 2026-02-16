@@ -1,0 +1,37 @@
+# =============================================================================
+# ucx-verify — Signature & integrity verification
+# =============================================================================
+# Verifies UCX file integrity and digital signatures.
+# Supports dual-layer verification (Layer 1 JAR-style + Layer 2 APK v2-style),
+# MANIFEST.MF hash checking, and certificate chain validation.
+#
+# 验证 UCX 文件的完整性和数字签名。
+# 支持双层验证（Layer 1 JAR 式 + Layer 2 APK v2 式）、
+# MANIFEST.MF 哈希校验和证书链验证。
+# =============================================================================
+
+[package]
+name = "ucx-verify"
+description = "UCX signature and integrity verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Hashing / 哈希 ---
+blake3 = { workspace = true }
+
+# --- Cryptography / 密码学 ---
+ed25519-dalek = { workspace = true }
+
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }

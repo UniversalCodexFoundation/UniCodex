@@ -1,0 +1,35 @@
+# =============================================================================
+# ucx-parse — Parse & read UCX files
+# =============================================================================
+# Parses `.ucx` archive files, extracts metadata and chapter content.
+# This is the primary module for reader/viewer integration.
+#
+# 解析 `.ucx` 归档文件，提取元数据和章节内容。
+# 这是阅读器/查看器集成的核心模块。
+# =============================================================================
+
+[package]
+name = "ucx-parse"
+description = "UCX file parsing and content extraction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# --- Archive / 归档 ---
+zip = { workspace = true }
+
+# --- Hashing / 哈希 ---
+blake3 = { workspace = true }
+
+# --- Serialization / 序列化 ---
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# --- Error handling / 错误处理 ---
+thiserror = { workspace = true }
+
+# --- Logging / 日志 ---
+tracing = { workspace = true }
