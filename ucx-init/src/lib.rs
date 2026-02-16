@@ -80,6 +80,11 @@ pub enum InitError {
     #[error("directory already contains a UCX project: {0}")]
     AlreadyExists(String),
 
+    /// The provided path contains path traversal components (`..`).
+    /// 提供的路径包含路径遍历组件（`..`）。
+    #[error("path contains '..' traversal component, which is not allowed: {0}")]
+    PathTraversal(String),
+
     /// Failed to perform an I/O operation (create directory, write file, etc.).
     /// I/O 操作失败（创建目录、写文件等）。
     #[error("I/O error: {0}")]
@@ -190,6 +195,18 @@ impl Default for InitOptions {
 /// - [`InitError::JsonSerialize`] — if JSON serialization fails.
 ///   如果 JSON 序列化失败。
 pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
+    // -------------------------------------------------------------------------
+    // Step 0: Validate the path — reject path traversal attacks.
+    // 步骤 0：验证路径 — 拒绝路径遍历攻击。
+    // -------------------------------------------------------------------------
+    // Check for `..` components in the path to prevent directory traversal.
+    // 检查路径中的 `..` 组件以防止目录遍历。
+    for component in path.components() {
+        if component == std::path::Component::ParentDir {
+            return Err(InitError::PathTraversal(path.display().to_string()));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Step 1: Check if the project already exists.
     // 步骤 1：检查项目是否已存在。
@@ -632,5 +649,25 @@ mod tests {
         assert_eq!(node.title, "第一章");
         assert_eq!(node.file.as_deref(), Some(FIRST_CHAPTER_FILE));
         assert!(node.is_leaf(), "the first chapter node should be a leaf");
+    }
+
+    /// Test: Initializing with a path containing `..` should fail with PathTraversal.
+    ///
+    /// 测试：使用包含 `..` 的路径初始化应返回 PathTraversal 错误。
+    #[test]
+    fn test_init_rejects_path_traversal() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        // Construct a path with `..` components (path traversal attempt).
+        // 构造包含 `..` 组件的路径（路径遍历尝试）。
+        let malicious_path = tmp.path().join("safe").join("..").join("..").join("evil");
+        let options = InitOptions::default();
+
+        let result = init(&malicious_path, &options);
+        assert!(result.is_err(), "should reject path with '..'");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, InitError::PathTraversal(_)),
+            "expected PathTraversal, got: {err:?}"
+        );
     }
 }
