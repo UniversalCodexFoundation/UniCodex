@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::codex::{Creator, Description, Publisher, Rating, Rights};
+use crate::codex::{Creator, Dates, Description, Publisher, Rating, Rights};
 use crate::ucx_id::UcxId;
 
 // =============================================================================
@@ -78,6 +78,11 @@ pub struct ProjectConfig {
     /// 内容分级（可选）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rating: Option<Rating>,
+
+    /// Important dates (optional).
+    /// 重要日期（可选）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dates: Option<Dates>,
 
     /// Build configuration (optional).
     /// 构建配置（可选）。
@@ -268,6 +273,7 @@ mod tests {
             rights: None,
             cover: None,
             rating: None,
+            dates: None,
             build: None,
             signing: None,
         }

@@ -7,7 +7,7 @@
 //! 将开发时的 `unicodex.toml`（ProjectConfig）转换为
 //! 运行时的 `metadata/codex.json`（Codex）格式，用于打包到 UCX 归档中。
 
-use ucx_types::codex::{Codex, Description, Identifier, Rights, Title};
+use ucx_types::codex::{Codex, Dates, Description, Identifier, Rights, Title};
 use ucx_types::project::ProjectConfig;
 
 // =============================================================================
@@ -143,9 +143,23 @@ pub fn config_to_codex(config: &ProjectConfig) -> Codex {
         // 版权/许可证（可选）。
         rights,
 
-        // Dates are not stored in ProjectConfig — None at build time.
-        // ProjectConfig 中不存储日期 — 构建时为 None。
-        dates: None,
+        // Dates — map from config.dates, auto-fill modified with today's date.
+        // 日期 — 从 config.dates 映射，自动填充 modified 为当天日期。
+        dates: {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            match &config.dates {
+                Some(d) => Some(Dates {
+                    created: d.created.clone(),
+                    published: d.published.clone(),
+                    modified: Some(today),
+                }),
+                None => Some(Dates {
+                    created: None,
+                    published: None,
+                    modified: Some(today),
+                }),
+            }
+        },
 
         // Cover image path.
         // 封面图路径。
@@ -218,6 +232,7 @@ mod tests {
                 system: "age".to_string(),
                 value: "16+".to_string(),
             }),
+            dates: None,
             build: None,
             signing: None,
         }

@@ -35,6 +35,9 @@ thiserror = { workspace = true }
 # --- Logging / 日志 ---
 tracing = { workspace = true }
 
+# --- Date/time / 日期时间 ---
+chrono = { workspace = true }                        # Date formatting for dates field / dates 字段的日期格式化
+
 [dev-dependencies]
 # --- Testing / 测试 ---
 tempfile = { workspace = true }           # Temporary directories for tests / 测试用临时目录

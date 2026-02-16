@@ -36,7 +36,7 @@ use ucx_types::project::{
 };
 use ucx_types::structure::{Structure, StructureNode};
 use ucx_types::ucx_id::UcxId;
-use ucx_types::codex::Creator;
+use ucx_types::codex::{Creator, Dates};
 
 // =============================================================================
 // Constants / 常量
@@ -439,12 +439,20 @@ fn build_project_config(ucx_id: &UcxId, options: &InitOptions) -> ProjectConfig 
             status: None,
         }),
 
-        // Optional sections — all None for a fresh project.
-        // 可选段落 — 新项目全部为 None。
+        // Optional sections — all None for a fresh project (except dates).
+        // 可选段落 — 新项目全部为 None（dates 除外）。
         description: None,
         rights: None,
         cover: None,
         rating: None,
+
+        // [dates] section — auto-fill created date.
+        // [dates] 段 — 自动填充创建日期。
+        dates: Some(Dates {
+            created: Some(chrono::Local::now().format("%Y-%m-%d").to_string()),
+            published: None,
+            modified: None,
+        }),
 
         // [build] section — output directory defaults to "dist".
         // [build] 段 — 输出目录默认为 "dist"。

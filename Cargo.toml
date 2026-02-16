@@ -110,3 +110,6 @@ tokio = { version = "1.49", features = ["full"] }    # Async runtime for network
 tracing = "0.1"                                      # Structured logging / 结构化日志
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Log output formatting / 日志输出格式化
 tempfile = "3"                                        # Temporary files for testing / 测试用临时文件
+
+# --- Date/time / 日期时间 ---
+chrono = { version = "0.4", default-features = false, features = ["clock"] }  # Date formatting for dates field / dates 字段的日期格式化

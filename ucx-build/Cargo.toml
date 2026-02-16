@@ -43,6 +43,9 @@ tracing = { workspace = true }
 # --- File traversal / 文件遍历 ---
 walkdir = { workspace = true }
 
+# --- Date/time / 日期时间 ---
+chrono = { workspace = true }                        # Date formatting for modified field / modified 字段的日期格式化
+
 [dev-dependencies]
 # --- Temporary files for testing / 测试用临时文件 ---
 tempfile = { workspace = true }
