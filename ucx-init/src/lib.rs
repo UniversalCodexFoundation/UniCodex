@@ -85,6 +85,11 @@ pub enum InitError {
     #[error("path contains '..' traversal component, which is not allowed: {0}")]
     PathTraversal(String),
 
+    /// A required input field is empty or invalid.
+    /// 必需的输入字段为空或无效。
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     /// Failed to perform an I/O operation (create directory, write file, etc.).
     /// I/O 操作失败（创建目录、写文件等）。
     #[error("I/O error: {0}")]
@@ -206,6 +211,13 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
             return Err(InitError::PathTraversal(path.display().to_string()));
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Step 0.5: Validate input options — reject empty or control-char inputs.
+    // 步骤 0.5：验证输入选项 — 拒绝空值或含控制字符的输入。
+    // -------------------------------------------------------------------------
+    validate_input(&options.name, "name")?;
+    validate_input(&options.author, "author")?;
 
     // -------------------------------------------------------------------------
     // Step 1: Check if the project already exists.
@@ -443,6 +455,40 @@ fn build_first_chapter() -> String {
     "# 第一章\n\n这是你的第一个章节。开始创作吧！\n".to_string()
 }
 
+/// Validate a user-supplied input string.
+///
+/// Rejects:
+/// - Empty strings or whitespace-only strings.
+/// - Strings containing ASCII control characters (U+0000–U+001F except common whitespace).
+///
+/// 验证用户输入的字符串。
+/// 拒绝：
+/// - 空字符串或仅含空白的字符串。
+/// - 包含 ASCII 控制字符的字符串（U+0000–U+001F，常见空白字符除外）。
+fn validate_input(value: &str, field_name: &str) -> Result<(), InitError> {
+    // Reject empty or whitespace-only input.
+    // 拒绝空或仅含空白的输入。
+    if value.trim().is_empty() {
+        return Err(InitError::InvalidInput(format!(
+            "'{field_name}' must not be empty"
+        )));
+    }
+
+    // Reject strings containing control characters (U+0000–U+001F),
+    // except for common whitespace: tab (\t), newline (\n), carriage return (\r).
+    // 拒绝包含控制字符（U+0000–U+001F）的字符串，
+    // 常见空白字符除外：制表符 (\t)、换行符 (\n)、回车符 (\r)。
+    if let Some(pos) = value.chars().position(|c| {
+        c.is_control() && c != '\t' && c != '\n' && c != '\r'
+    }) {
+        return Err(InitError::InvalidInput(format!(
+            "'{field_name}' contains a control character at position {pos}"
+        )));
+    }
+
+    Ok(())
+}
+
 // =============================================================================
 // Tests / 测试
 // =============================================================================
@@ -668,6 +714,69 @@ mod tests {
         assert!(
             matches!(err, InitError::PathTraversal(_)),
             "expected PathTraversal, got: {err:?}"
+        );
+    }
+
+    /// Test (UX-001): Initializing with empty name or author should fail.
+    ///
+    /// 测试（UX-001）：使用空的 name 或 author 初始化应失败。
+    #[test]
+    fn test_init_rejects_empty_name() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("empty-name");
+
+        let options = InitOptions {
+            name: "".to_string(),
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+        };
+        let result = init(&project_dir, &options);
+        assert!(result.is_err(), "should reject empty name");
+        assert!(
+            matches!(result.unwrap_err(), InitError::InvalidInput(_)),
+            "expected InvalidInput for empty name"
+        );
+    }
+
+    /// Test (UX-001): Initializing with empty author should fail.
+    ///
+    /// 测试（UX-001）：使用空的 author 初始化应失败。
+    #[test]
+    fn test_init_rejects_empty_author() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("empty-author");
+
+        let options = InitOptions {
+            name: "书名".to_string(),
+            author: "   ".to_string(),
+            language: "zh-CN".to_string(),
+        };
+        let result = init(&project_dir, &options);
+        assert!(result.is_err(), "should reject whitespace-only author");
+        assert!(
+            matches!(result.unwrap_err(), InitError::InvalidInput(_)),
+            "expected InvalidInput for whitespace-only author"
+        );
+    }
+
+    /// Test (SEC-003): Initializing with control characters in name should fail.
+    ///
+    /// 测试（SEC-003）：name 中包含控制字符应失败。
+    #[test]
+    fn test_init_rejects_control_chars() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let project_dir = tmp.path().join("ctrl-chars");
+
+        let options = InitOptions {
+            name: "bad\x00name".to_string(),
+            author: "作者".to_string(),
+            language: "zh-CN".to_string(),
+        };
+        let result = init(&project_dir, &options);
+        assert!(result.is_err(), "should reject control character in name");
+        assert!(
+            matches!(result.unwrap_err(), InitError::InvalidInput(_)),
+            "expected InvalidInput for control chars"
         );
     }
 }
