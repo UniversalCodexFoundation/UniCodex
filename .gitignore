@@ -1,0 +1,23 @@
+# Claude Code 配置（本地开发工具，不纳入版本控制）
+.claude/
+Claude.md
+CLAUDE.md
+
+# 构建输出
+dist/
+target/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 版本快照（ucx version auto 自动生成）
+.ucx-snapshot.json
