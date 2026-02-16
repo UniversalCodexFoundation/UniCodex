@@ -94,23 +94,48 @@ enum Commands {
 
     /// Unpack a UCX file to a directory.
     /// 将 UCX 文件解包到目录。
-    Unpack,
+    Unpack {
+        /// Arguments placeholder (command not yet implemented).
+        /// 参数占位（命令尚未实现）。
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
 
     /// Sign a UCX file.
     /// 对 UCX 文件签名。
-    Sign,
+    Sign {
+        /// Arguments placeholder (command not yet implemented).
+        /// 参数占位（命令尚未实现）。
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
 
     /// Manage version numbers.
     /// 管理版本号。
-    Version,
+    Version {
+        /// Arguments placeholder (command not yet implemented).
+        /// 参数占位（命令尚未实现）。
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
 
     /// Encrypt chapters or resources.
     /// 加密章节或资源。
-    Encrypt,
+    Encrypt {
+        /// Arguments placeholder (command not yet implemented).
+        /// 参数占位（命令尚未实现）。
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
 
     /// Decrypt chapters or resources.
     /// 解密章节或资源。
-    Decrypt,
+    Decrypt {
+        /// Arguments placeholder (command not yet implemented).
+        /// 参数占位（命令尚未实现）。
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _args: Vec<String>,
+    },
 }
 
 // =============================================================================
@@ -118,9 +143,16 @@ enum Commands {
 // =============================================================================
 
 fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber for structured logging.
-    // 初始化 tracing 订阅器以进行结构化日志输出。
-    tracing_subscriber::fmt::init();
+    // Initialize tracing subscriber with default level WARN.
+    // Users can override with RUST_LOG env var (e.g., RUST_LOG=info for verbose output).
+    // 初始化 tracing 订阅器，默认级别为 WARN。
+    // 用户可通过 RUST_LOG 环境变量覆盖（如 RUST_LOG=info 启用详细输出）。
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
 
     // Parse CLI arguments.
     // 解析命令行参数。
@@ -281,19 +313,19 @@ fn main() -> anyhow::Result<()> {
         // =====================================================================
         // Unimplemented subcommands (Phase 2+) / 未实现的子命令（第二阶段+）
         // =====================================================================
-        Commands::Unpack => {
+        Commands::Unpack { .. } => {
             println!("ucx unpack: not yet implemented (planned for Phase 2)");
         }
-        Commands::Sign => {
+        Commands::Sign { .. } => {
             println!("ucx sign: not yet implemented (planned for Phase 3)");
         }
-        Commands::Version => {
+        Commands::Version { .. } => {
             println!("ucx version: not yet implemented (planned for Phase 2)");
         }
-        Commands::Encrypt => {
+        Commands::Encrypt { .. } => {
             println!("ucx encrypt: not yet implemented (planned for Phase 4)");
         }
-        Commands::Decrypt => {
+        Commands::Decrypt { .. } => {
             println!("ucx decrypt: not yet implemented (planned for Phase 4)");
         }
     }
