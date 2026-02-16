@@ -144,14 +144,18 @@ enum Commands {
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber with default level WARN.
+    // Output is simplified: no timestamp, no module target — only level + message.
     // Users can override with RUST_LOG env var (e.g., RUST_LOG=info for verbose output).
     // 初始化 tracing 订阅器，默认级别为 WARN。
+    // 输出已简化：无时间戳、无模块目标 — 仅级别 + 消息。
     // 用户可通过 RUST_LOG 环境变量覆盖（如 RUST_LOG=info 启用详细输出）。
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
+        .without_time()
+        .with_target(false)
         .init();
 
     // Parse CLI arguments.

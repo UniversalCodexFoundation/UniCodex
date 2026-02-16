@@ -27,7 +27,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 
 // --- Sub-modules / 子模块 ---
 pub mod archive;
@@ -374,9 +374,6 @@ fn validate_file_references(
     collect_missing_files(nodes, content_dir, &mut missing);
 
     if !missing.is_empty() {
-        for file in &missing {
-            warn!("Referenced file not found: content/{file}");
-        }
         return Err(BuildError::InvalidStructure(format!(
             "struct.json references {} missing file(s): {}",
             missing.len(),
