@@ -122,6 +122,11 @@ enum Commands {
         /// Path to the .ucx file.
         /// .ucx 文件路径。
         file: PathBuf,
+
+        /// Output in JSON format (machine-readable).
+        /// 以 JSON 格式输出（机器可读）。
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// Verify the integrity and signatures of a UCX file.
@@ -362,9 +367,18 @@ fn main() -> anyhow::Result<()> {
         // ucx info — Display UCX file metadata.
         // ucx info — 显示 UCX 文件元数据。
         // =====================================================================
-        Commands::Info { file } => {
+        Commands::Info { file, json } => {
             let archive = ucx_parse::open(&file)?;
             let codex = archive.codex();
+
+            // JSON output mode: print codex.json pretty-printed and exit.
+            // JSON 输出模式：输出格式化的 codex.json 并退出。
+            if json {
+                let json_str = serde_json::to_string_pretty(codex)
+                    .map_err(|e| anyhow::anyhow!("JSON serialization error: {e}"))?;
+                println!("{json_str}");
+                return Ok(());
+            }
 
             // Print work information.
             // 打印作品信息。
