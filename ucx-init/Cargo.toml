@@ -18,13 +18,23 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# --- Internal crates / 内部 crate ---
+ucx-types = { workspace = true }          # Shared data types / 公共类型
+
 # --- Serialization / 序列化 ---
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
+
+# --- UUID generation / UUID 生成 ---
+uuid = { workspace = true }               # UUID v4 for UCX ID generation / UCX ID 生成
 
 # --- Error handling / 错误处理 ---
 thiserror = { workspace = true }
 
 # --- Logging / 日志 ---
 tracing = { workspace = true }
+
+[dev-dependencies]
+# --- Testing / 测试 ---
+tempfile = { workspace = true }           # Temporary directories for tests / 测试用临时目录

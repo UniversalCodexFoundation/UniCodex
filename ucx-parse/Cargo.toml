@@ -18,6 +18,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# --- Internal crates / 内部 crate ---
+# Shared types (Codex, Structure, Manifest, etc.) / 公共类型
+ucx-types = { workspace = true }
+
 # --- Archive / 归档 ---
 zip = { workspace = true }
 
@@ -33,3 +37,7 @@ thiserror = { workspace = true }
 
 # --- Logging / 日志 ---
 tracing = { workspace = true }
+
+[dev-dependencies]
+# --- Temporary files for testing / 测试用临时文件 ---
+tempfile = { workspace = true }

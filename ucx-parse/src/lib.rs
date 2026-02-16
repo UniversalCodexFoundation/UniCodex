@@ -1,16 +1,27 @@
-//! UCX Parse & Read Module.
+//! UCX Parse & Read Module — parse `.ucx` archive files and access content.
 //!
-//! This module parses `.ucx` archive files, extracts metadata, and provides
-//! access to chapter content. It is the primary module for reader/viewer
-//! integration — third-party applications only need this crate (plus
-//! `ucx-verify` and `ucx-crypto` optionally) to read UCX files.
+//! This module parses `.ucx` archive files (ZIP-based), extracts metadata,
+//! and provides access to chapter content. It is the primary module for
+//! reader/viewer integration.
 //!
-//! UCX 解析与读取模块。
-//! 解析 `.ucx` 归档文件，提取元数据，并提供章节内容访问。
-//! 这是阅读器/查看器集成的核心模块 —— 第三方应用仅需此 crate
-//! （可选加上 `ucx-verify` 和 `ucx-crypto`）即可读取 UCX 文件。
+//! UCX 解析与读取模块 — 解析 `.ucx` 归档文件并访问内容。
+//! 解析基于 ZIP 的 `.ucx` 归档文件，提取元数据，并提供章节内容访问。
+//! 这是阅读器/查看器集成的核心模块。
+
+use std::io::Read as IoRead;
+use std::path::Path;
 
 use thiserror::Error;
+use tracing::{debug, info, warn};
+use ucx_types::{Codex, Manifest, Structure};
+
+// =============================================================================
+// Constants / 常量
+// =============================================================================
+
+/// The expected MIME type for UCX archives.
+/// UCX 归档的预期 MIME 类型。
+const UCX_MIMETYPE: &str = "application/vnd.unicodex+zip";
 
 // =============================================================================
 // Error types / 错误类型
@@ -49,49 +60,383 @@ pub enum ParseError {
     /// ZIP archive reading error.
     /// ZIP 归档读取错误。
     #[error("ZIP archive error: {0}")]
-    Zip(String),
+    Zip(#[from] zip::result::ZipError),
+
+    /// Content encoding error (e.g., invalid UTF-8).
+    /// 内容编码错误（如无效的 UTF-8）。
+    #[error("content encoding error: {0}")]
+    Encoding(String),
 }
 
 // =============================================================================
-// Public API / 公开接口
+// HashVerifyResult / 哈希验证结果
+// =============================================================================
+
+/// Result of verifying a single file's hash against the manifest.
+///
+/// 单个文件的哈希验证结果。
+#[derive(Debug, Clone)]
+pub struct HashVerifyResult {
+    /// File name (path within the archive).
+    /// 文件名（归档内路径）。
+    pub name: String,
+
+    /// Expected hash digest from the manifest.
+    /// 清单中的预期哈希摘要。
+    pub expected: String,
+
+    /// Actual hash digest computed from the file content.
+    /// 从文件内容计算出的实际哈希摘要。
+    pub actual: String,
+
+    /// Whether the expected and actual hashes match.
+    /// 预期和实际哈希是否匹配。
+    pub valid: bool,
+}
+
+// =============================================================================
+// UcxArchive / 已解析的 UCX 归档
+// =============================================================================
+
+/// A parsed UCX archive, providing access to metadata and content.
+///
+/// Holds a ZIP reader internally and caches parsed metadata (Codex,
+/// Structure, Manifest) for efficient repeated access.
+///
+/// 一个已解析的 UCX 归档，提供元数据和内容的访问接口。
+/// 内部持有 ZIP reader，并缓存已解析的元数据（Codex、Structure、Manifest）。
+pub struct UcxArchive {
+    /// The underlying ZIP archive reader (does not implement Debug).
+    /// 底层 ZIP 归档读取器（未实现 Debug）。
+    archive: zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+
+    /// Cached codex metadata (from `metadata/codex.json`).
+    /// 缓存的作品元数据（来自 `metadata/codex.json`）。
+    codex: Codex,
+
+    /// Cached content structure (from `content/struct.json`).
+    /// 缓存的内容结构（来自 `content/struct.json`）。
+    structure: Structure,
+
+    /// Cached resource manifest (from `META-INF/MANIFEST.MF`).
+    /// 缓存的资源清单（来自 `META-INF/MANIFEST.MF`）。
+    manifest: Manifest,
+}
+
+/// Manual `Debug` implementation because `ZipArchive` does not derive `Debug`.
+///
+/// 手动实现 `Debug`，因为 `ZipArchive` 未派生 `Debug`。
+impl std::fmt::Debug for UcxArchive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UcxArchive")
+            .field("codex", &self.codex)
+            .field("structure", &self.structure)
+            .field("manifest", &self.manifest)
+            .field("archive", &format_args!("<ZipArchive>"))
+            .finish()
+    }
+}
+
+// =============================================================================
+// Public API — top-level function / 公开接口 — 顶层函数
 // =============================================================================
 
 /// Open and parse a UCX file.
 ///
-/// Reads the ZIP archive, validates the basic structure (mimetype, META-INF/,
-/// metadata/), and parses MANIFEST.MF.
+/// Reads the ZIP archive, validates the mimetype, and parses all required
+/// metadata files (MANIFEST.MF, codex.json, struct.json).
 ///
 /// 打开并解析 UCX 文件。
-/// 读取 ZIP 归档，验证基本结构（mimetype、META-INF/、metadata/），
-/// 并解析 MANIFEST.MF。
+/// 读取 ZIP 归档，验证 mimetype，并解析所有必需的元数据文件。
 ///
 /// # Arguments / 参数
 ///
-/// * `path` - Path to the `.ucx` file.
-///            `.ucx` 文件路径。
+/// * `path` — Path to the `.ucx` file. / `.ucx` 文件路径。
 ///
-/// # Returns / 返回
+/// # Errors / 错误
 ///
-/// Returns a parsed archive handle, or a `ParseError` on failure.
-/// 返回解析后的归档句柄，或在失败时返回 `ParseError`。
-pub fn open(_path: &std::path::Path) -> Result<(), ParseError> {
-    // TODO: Implement UCX file opening and parsing.
-    // TODO: 实现 UCX 文件的打开和解析。
-    //
-    // Steps / 步骤:
-    // 1. Open ZIP archive.
-    //    打开 ZIP 归档。
-    // 2. Verify mimetype entry (first entry, uncompressed, value "application/ucx").
-    //    验证 mimetype 条目。
-    // 3. Parse MANIFEST.MF.
-    //    解析 MANIFEST.MF。
-    // 4. Parse metadata/codex.json.
-    //    解析 metadata/codex.json。
-    // 5. Parse content/struct.json.
-    //    解析 content/struct.json。
-    // 6. Return a structured archive handle for further operations.
-    //    返回结构化的归档句柄用于后续操作。
-    todo!("ucx-parse: file opening not yet implemented")
+/// Returns `ParseError` if the file cannot be opened, is not a valid UCX
+/// archive, or is missing required metadata files.
+pub fn open(path: &Path) -> Result<UcxArchive, ParseError> {
+    info!("Opening UCX file: {}", path.display());
+
+    // Step 1: Open the file and create a BufReader.
+    // 步骤 1：打开文件并创建 BufReader。
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+
+    // Step 2: Create ZipArchive from the buffered reader.
+    // 步骤 2：从 BufReader 创建 ZipArchive。
+    let mut archive = zip::ZipArchive::new(reader)?;
+    debug!("ZIP archive opened, {} entries found", archive.len());
+
+    // Step 3: Validate mimetype — must be the first entry.
+    // 步骤 3：验证 mimetype — 必须是第一个条目。
+    validate_mimetype(&mut archive)?;
+
+    // Step 4: Parse MANIFEST.MF.
+    // 步骤 4：解析 MANIFEST.MF。
+    let manifest = parse_manifest(&mut archive)?;
+    debug!("MANIFEST.MF parsed, {} entries", manifest.entries.len());
+
+    // Step 5: Parse codex.json.
+    // 步骤 5：解析 codex.json。
+    let codex = parse_codex(&mut archive)?;
+    debug!("codex.json parsed: \"{}\"", codex.title.main);
+
+    // Step 6: Parse struct.json.
+    // 步骤 6：解析 struct.json。
+    let structure = parse_structure(&mut archive)?;
+    debug!(
+        "struct.json parsed, {} top-level nodes",
+        structure.structure.len()
+    );
+
+    info!("UCX file parsed successfully: \"{}\"", codex.title.main);
+
+    Ok(UcxArchive {
+        archive,
+        codex,
+        structure,
+        manifest,
+    })
+}
+
+// =============================================================================
+// UcxArchive methods / UcxArchive 方法
+// =============================================================================
+
+impl UcxArchive {
+    /// Get a reference to the work's codex metadata.
+    ///
+    /// 获取作品的 codex 元数据引用。
+    pub fn codex(&self) -> &Codex {
+        &self.codex
+    }
+
+    /// Get a reference to the content structure tree.
+    ///
+    /// 获取内容结构树的引用。
+    pub fn structure(&self) -> &Structure {
+        &self.structure
+    }
+
+    /// Get a reference to the resource manifest.
+    ///
+    /// 获取资源清单的引用。
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
+    /// Read the text content of a specific chapter file.
+    ///
+    /// The `file` parameter is the file path as listed in `struct.json`
+    /// (e.g., `"chapter-001.md"`). The actual ZIP entry is `content/{file}`.
+    ///
+    /// 读取指定章节文件的文本内容。
+    /// `file` 参数是 `struct.json` 中列出的文件路径（如 `"chapter-001.md"`）。
+    /// 实际 ZIP 条目为 `content/{file}`。
+    ///
+    /// # Errors / 错误
+    ///
+    /// - `MissingFile` if the chapter entry does not exist.
+    /// - `Encoding` if the content is not valid UTF-8.
+    pub fn read_chapter(&mut self, file: &str) -> Result<String, ParseError> {
+        // Build the full path within the ZIP archive.
+        // 构建 ZIP 归档内的完整路径。
+        let entry_path = format!("content/{file}");
+        debug!("Reading chapter: {}", entry_path);
+
+        // Read the entry content as bytes.
+        // 读取条目内容为字节。
+        let bytes = read_entry_bytes(&mut self.archive, &entry_path)?;
+
+        // Decode as UTF-8 string.
+        // 解码为 UTF-8 字符串。
+        String::from_utf8(bytes).map_err(|e| {
+            ParseError::Encoding(format!(
+                "chapter '{entry_path}' is not valid UTF-8: {e}"
+            ))
+        })
+    }
+
+    /// Verify the hashes of all files listed in the manifest.
+    ///
+    /// For each entry in the manifest, reads the file from the archive,
+    /// computes its BLAKE3 hash, and compares it to the expected digest.
+    ///
+    /// 验证清单中列出的所有文件的哈希值。
+    /// 对清单中的每个条目，从归档中读取文件，计算 BLAKE3 哈希，
+    /// 并与预期摘要对比。
+    pub fn verify_hashes(&mut self) -> Result<Vec<HashVerifyResult>, ParseError> {
+        let mut results = Vec::with_capacity(self.manifest.entries.len());
+
+        // Clone entries to avoid borrowing issues (manifest is borrowed immutably
+        // while archive needs mutable borrow for reading).
+        // 克隆条目以避免借用冲突（manifest 不可变借用的同时 archive 需要可变借用读取）。
+        let entries: Vec<_> = self.manifest.entries.clone();
+
+        for entry in &entries {
+            // Read file content from archive.
+            // 从归档中读取文件内容。
+            let bytes = read_entry_bytes(&mut self.archive, &entry.name)?;
+
+            // Compute BLAKE3 hash and convert to hex string.
+            // 计算 BLAKE3 哈希并转换为十六进制字符串。
+            let actual_hash = blake3::hash(&bytes);
+            let actual_hex = actual_hash.to_hex().to_string();
+
+            let valid = actual_hex == entry.digest;
+            if !valid {
+                warn!(
+                    "Hash mismatch for '{}': expected={}, actual={}",
+                    entry.name, entry.digest, actual_hex
+                );
+            }
+
+            results.push(HashVerifyResult {
+                name: entry.name.clone(),
+                expected: entry.digest.clone(),
+                actual: actual_hex,
+                valid,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// List all file paths in the archive.
+    ///
+    /// Returns the name of every entry in the ZIP archive.
+    ///
+    /// 列出归档中的所有文件路径。
+    /// 返回 ZIP 归档中每个条目的名称。
+    pub fn list_files(&self) -> Vec<String> {
+        self.archive
+            .file_names()
+            .map(|name| name.to_string())
+            .collect()
+    }
+}
+
+// =============================================================================
+// Internal helpers / 内部辅助函数
+// =============================================================================
+
+/// Validate that the first entry in the ZIP is `mimetype` with the correct value.
+///
+/// 验证 ZIP 中第一个条目是 `mimetype` 且值正确。
+fn validate_mimetype(
+    archive: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+) -> Result<(), ParseError> {
+    // The first entry (index 0) must be named "mimetype".
+    // 第一个条目（索引 0）必须命名为 "mimetype"。
+    let first_name = archive.name_for_index(0).ok_or_else(|| {
+        ParseError::InvalidFormat("archive is empty, no mimetype entry".to_string())
+    })?;
+
+    if first_name != "mimetype" {
+        return Err(ParseError::InvalidFormat(format!(
+            "first entry must be 'mimetype', found '{first_name}'"
+        )));
+    }
+
+    // Read the mimetype content and validate.
+    // 读取 mimetype 内容并验证。
+    let content_bytes = read_entry_bytes(archive, "mimetype")?;
+    let content = String::from_utf8(content_bytes)
+        .map_err(|e| ParseError::InvalidFormat(format!("mimetype is not UTF-8: {e}")))?;
+
+    // Trim trailing whitespace/newlines for comparison.
+    // 修剪尾部空白/换行用于比较。
+    let trimmed = content.trim();
+    if trimmed != UCX_MIMETYPE {
+        return Err(ParseError::InvalidFormat(format!(
+            "mimetype mismatch: expected '{UCX_MIMETYPE}', found '{trimmed}'"
+        )));
+    }
+
+    debug!("mimetype validated: {UCX_MIMETYPE}");
+    Ok(())
+}
+
+/// Parse the `META-INF/MANIFEST.MF` entry from the archive.
+///
+/// 从归档中解析 `META-INF/MANIFEST.MF` 条目。
+fn parse_manifest(
+    archive: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+) -> Result<Manifest, ParseError> {
+    let bytes = read_entry_bytes(archive, "META-INF/MANIFEST.MF").map_err(|e| match e {
+        ParseError::MissingFile(_) => ParseError::MissingFile("META-INF/MANIFEST.MF".to_string()),
+        other => other,
+    })?;
+
+    let text = String::from_utf8(bytes).map_err(|e| {
+        ParseError::ManifestParse(format!("MANIFEST.MF is not valid UTF-8: {e}"))
+    })?;
+
+    Manifest::from_manifest_str(&text)
+        .map_err(|e| ParseError::ManifestParse(format!("{e}")))
+}
+
+/// Parse the `metadata/codex.json` entry from the archive.
+///
+/// 从归档中解析 `metadata/codex.json` 条目。
+fn parse_codex(
+    archive: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+) -> Result<Codex, ParseError> {
+    let bytes = read_entry_bytes(archive, "metadata/codex.json").map_err(|e| match e {
+        ParseError::MissingFile(_) => ParseError::MissingFile("metadata/codex.json".to_string()),
+        other => other,
+    })?;
+
+    let text = String::from_utf8(bytes).map_err(|e| {
+        ParseError::MetadataParse(format!("codex.json is not valid UTF-8: {e}"))
+    })?;
+
+    serde_json::from_str::<Codex>(&text)
+        .map_err(|e| ParseError::MetadataParse(format!("codex.json: {e}")))
+}
+
+/// Parse the `content/struct.json` entry from the archive.
+///
+/// 从归档中解析 `content/struct.json` 条目。
+fn parse_structure(
+    archive: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+) -> Result<Structure, ParseError> {
+    let bytes = read_entry_bytes(archive, "content/struct.json").map_err(|e| match e {
+        ParseError::MissingFile(_) => ParseError::MissingFile("content/struct.json".to_string()),
+        other => other,
+    })?;
+
+    let text = String::from_utf8(bytes).map_err(|e| {
+        ParseError::MetadataParse(format!("struct.json is not valid UTF-8: {e}"))
+    })?;
+
+    serde_json::from_str::<Structure>(&text)
+        .map_err(|e| ParseError::MetadataParse(format!("struct.json: {e}")))
+}
+
+/// Read the raw bytes of a ZIP entry by name.
+///
+/// Returns `ParseError::MissingFile` if the entry does not exist.
+///
+/// 按名称读取 ZIP 条目的原始字节。
+/// 如果条目不存在，返回 `ParseError::MissingFile`。
+fn read_entry_bytes(
+    archive: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>,
+    name: &str,
+) -> Result<Vec<u8>, ParseError> {
+    let mut entry = archive.by_name(name).map_err(|e| match e {
+        zip::result::ZipError::FileNotFound => {
+            ParseError::MissingFile(name.to_string())
+        }
+        other => ParseError::Zip(other),
+    })?;
+
+    let mut buf = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 // =============================================================================
@@ -99,9 +444,4 @@ pub fn open(_path: &std::path::Path) -> Result<(), ParseError> {
 // =============================================================================
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder() {
-        assert!(true);
-    }
-}
+mod tests;
