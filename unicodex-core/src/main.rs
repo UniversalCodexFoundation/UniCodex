@@ -104,6 +104,11 @@ enum Commands {
         /// 覆盖输出文件名（不含 .ucx 扩展名）。
         #[arg(short = 'O', long)]
         output_name: Option<String>,
+
+        /// Force overwrite without confirmation.
+        /// 强制覆盖，不提示确认。
+        #[arg(short = 'f', long, default_value_t = false)]
+        force: bool,
     },
 
     /// Display information about a UCX file.
@@ -277,7 +282,33 @@ fn main() -> anyhow::Result<()> {
             path,
             output_dir,
             output_name,
+            force,
         } => {
+            // Pre-check: if the output file already exists and --force not specified,
+            // prompt the user for confirmation.
+            // 预检查：如果输出文件已存在且未指定 --force，提示用户确认。
+            let expected_output = ucx_build::resolve_output_path(
+                &path,
+                &ucx_build::BuildOptions {
+                    output_dir: output_dir.clone(),
+                    output_name: output_name.clone(),
+                },
+            );
+            if let Ok(ref out_path) = expected_output {
+                if out_path.exists() && !force {
+                    eprintln!("Warning: output file already exists: {}", out_path.display());
+                    eprint!("Overwrite? [y/N] ");
+                    let mut input = String::new();
+                    if std::io::stdin().read_line(&mut input).is_ok() {
+                        let answer = input.trim().to_lowercase();
+                        if answer != "y" && answer != "yes" {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             let options = ucx_build::BuildOptions {
                 output_dir,
                 output_name,

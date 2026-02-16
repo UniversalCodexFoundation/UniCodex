@@ -241,6 +241,31 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
 }
 
 // =============================================================================
+// Public helpers / 公开辅助函数
+// =============================================================================
+
+/// Resolve the expected output file path for a build, without actually building.
+///
+/// Reads `unicodex.toml` to determine the output directory and file name,
+/// then returns the full path. Used by the CLI to check for existing files.
+///
+/// 解析预期的构建输出文件路径，但不实际执行构建。
+/// 读取 `unicodex.toml` 以确定输出目录和文件名，然后返回完整路径。
+/// 由 CLI 用于检查已存在的文件。
+pub fn resolve_output_path(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, BuildError> {
+    let config_path = project_path.join("unicodex.toml");
+    let config_str = fs::read_to_string(&config_path).map_err(|_| {
+        BuildError::ConfigNotFound(config_path.display().to_string())
+    })?;
+    let config: ucx_types::ProjectConfig = toml::from_str(&config_str).map_err(|e| {
+        BuildError::ConfigParse(e.to_string())
+    })?;
+    let output_dir = resolve_output_dir(project_path, &config, options);
+    let output_name = resolve_output_name(project_path, &config, options);
+    Ok(output_dir.join(format!("{output_name}.ucx")))
+}
+
+// =============================================================================
 // Internal helpers / 内部辅助函数
 // =============================================================================
 
