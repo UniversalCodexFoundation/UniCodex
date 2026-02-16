@@ -1,0 +1,39 @@
+# =============================================================================
+# ucx-types — Shared types for all UCX modules.
+# ucx-types — 所有 UCX 模块共享的公共类型。
+# =============================================================================
+#
+# This crate defines the data structures shared across multiple UCX modules,
+# solving the type-ownership problem identified in ADR-001.
+# Multiple modules (ucx-parse, ucx-build, ucx-init, etc.) depend on this crate
+# for common type definitions (Codex, Structure, Manifest, etc.).
+#
+# 本 crate 定义多个 UCX 模块共享的数据结构，
+# 解决 ADR-001 中识别的类型归属问题。
+# 多个模块（ucx-parse、ucx-build、ucx-init 等）依赖本 crate 的公共类型定义。
+# =============================================================================
+
+[package]
+name = "ucx-types"
+description = "Shared types for the Unicodex project — codex metadata, manifest, structure tree, and more."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Serialization / 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# UUID generation for UCX IDs / UCX ID 的 UUID 生成
+uuid = { workspace = true }
+
+# Base64 encoding for MANIFEST.MF hash digests / MANIFEST.MF 哈希摘要的 Base64 编码
+base64 = { workspace = true }
+
+# Error handling / 错误处理
+thiserror = { workspace = true }

@@ -16,6 +16,9 @@ members = [
     # --- Core CLI entry point / 核心 CLI 入口 ---
     "unicodex-core",
 
+    # --- Shared types / 公共类型 ---
+    "ucx-types",         # Shared data types for all modules / 所有模块共享的公共类型
+
     # --- Feature modules / 功能模块 ---
     "ucx-init",          # Project initialization / 项目初始化
     "ucx-build",         # Build & pack UCX files / 构建打包 UCX 文件
@@ -58,6 +61,7 @@ rust-version = "1.85"
 # --- Internal crates / 内部 crate ---
 # These allow cross-module references within the workspace.
 # 用于工作区内模块间的互相引用。
+ucx-types   = { path = "ucx-types" }
 ucx-init    = { path = "ucx-init" }
 ucx-build   = { path = "ucx-build" }
 ucx-parse   = { path = "ucx-parse" }
@@ -82,6 +86,15 @@ git2 = "0.20"                                        # libgit2 Rust bindings / l
 serde = { version = "1.0", features = ["derive"] }   # Serialization framework / 序列化框架
 serde_json = "1.0"                                   # JSON support / JSON 支持
 toml = "1.0"                                         # TOML support / TOML 支持
+
+# --- UUID generation / UUID 生成 ---
+uuid = { version = "1", features = ["v4"] }          # UUID v4 for UCX ID generation / UCX ID 生成
+
+# --- Encoding / 编码 ---
+base64 = "0.22"                                      # Base64 encoding for MANIFEST.MF digests / MANIFEST.MF 摘要编码
+
+# --- File traversal / 文件遍历 ---
+walkdir = "2"                                        # Recursive directory traversal / 递归目录遍历
 
 # --- Error handling / 错误处理 ---
 thiserror = "2.0"                                    # Library error types / 库错误类型定义
