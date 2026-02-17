@@ -104,4 +104,67 @@
 
 ---
 
+### 2026-02-17 — v0.1.0-alpha.2 修复：20 项问题修复
+
+**完成事项**：
+
+基于 v0.1.0-alpha.1 和 v0.1.0-alpha.2 测试报告，完成了 20 项修复（2 项新发现 + 18 项遗留问题）。
+排除 P-008（依赖 ucx-version 模块）和 SEC-004（依赖签名机制）。
+
+1. **ucx-init 模块增强**（10 项修复）
+   - NEW-001：name/author 字段拒绝换行符（`\n`/`\r`），仅保留 TAB 例外
+   - BUG-002：默认值本地化（"Untitled"→"无标题"、"Unknown"→"未知"）
+   - SEC-002：输入长度限制 500 字符，`--allow-long-fields` 可覆盖
+   - UX-002：BCP 47 语言标签基本格式验证
+   - P-004：目录结构精简（默认仅 `content/`，`--full` 创建完整结构）
+   - SUG-007：chapter-001.md 引导内容增强（UCX 提示注释块）
+   - P-009：unicodex.toml 模板增强（注释示例段）
+   - P-007：codex.json `dates` 字段（init 自动 `created`，build 自动 `modified`）
+   - P-003：Git 仓库自动初始化 + `.gitignore` 生成（`--no-git` 可跳过）
+   - `InitOptions` 从 3 个字段扩展为 6 个（`allow_long_fields`、`full`、`no_git`）
+   - 新增 `init_from_existing()` 公开函数（SUG-002）
+   - 新增 `validate_language_tag()` 内部函数
+
+2. **ucx-build 模块增强**（4 项修复）
+   - NEW-002：清理 `validate_file_references()` 中冗余 WARN 日志
+   - SUG-004：`dry_run()` 公开函数 + `DryRunResult`/`DryRunFile` 类型
+   - SUG-006：`check()` 公开函数 + `CheckResult`/`CheckItem` 类型（8 项校验）
+   - UX-007：`resolve_output_path()` 公开函数（用于 CLI 覆盖检查）
+   - `BuildOptions` 新增 `dry_run: bool` 字段
+   - 新增 `is_valid_bcp47()` 内部辅助函数
+
+3. **ucx-parse 模块增强**（1 项修复）
+   - UX-006：`UcxArchive` 新增 `file_path` 字段、`file_size()` 和 `chapter_count()` 方法
+
+4. **CLI 增强**（7 项修复）
+   - UX-003：非空目录确认提示，`--yes`/`-y` 跳过
+   - SUG-001：`--interactive`/`-i` 交互式 init 模式
+   - SUG-002：`--from-existing` 从现有 .md 文件初始化
+   - UX-007：build 覆盖确认，`--force`/`-f` 跳过
+   - SUG-003：`ucx info --json` 机器可读 JSON 输出
+   - SUG-005：`ucx verify --verbose` 详细哈希 + 计时 + 无签名提示
+   - SUG-006：`ucx check` 新子命令
+   - tracing subscriber 添加 `.without_time().with_target(false)`
+
+5. **规范文档修复**（1 项修复）
+   - P-002：`01-file-structure.md` 和 `05-signature-spec.md` 中 `unicodex-cli` → `unicodex`
+
+6. **新增依赖**
+   - `chrono`：日期格式化（ucx-init、ucx-build）
+   - `git2`：Git 仓库初始化（ucx-init）
+   - `serde_json`：CLI JSON 输出（unicodex-core 运行时依赖）
+
+**测试汇总**：76 tests（全部通过），release 构建成功
+
+**遗留问题**：
+- P-008：codex.json `file_version` 字段（依赖 ucx-version 模块，Phase 2）
+- SEC-004：签名机制（Layer 1 + Layer 2，Phase 3）
+
+**下一步**：
+- Phase 2：ucx-version（版本管理）、ucx-verify（签名验证逻辑）、P-008
+- Phase 3：ucx-sign（双层签名）、SEC-004
+- CI/CD 流水线配置
+
+---
+
 *后续开发进度将追加在此文档中*

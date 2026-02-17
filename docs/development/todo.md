@@ -1,41 +1,41 @@
 # Unicodex 后续开发待办事项
 
-> 来源：v0.1.0-alpha.1 测试报告 (`docs/test/problems/0.1.0-alpha.1.md`)
-> 记录时间：2026-02-16
-> 状态说明：以下问题超出 Phase 1 范围，纳入后续阶段计划
+> 来源：v0.1.0-alpha.1 / v0.1.0-alpha.2 测试报告
+> 更新时间：2026-02-17
+> 状态说明：已完成项在 v0.1.0-alpha.2 中修复并验证通过
 
 ---
 
-## Phase 2 计划项
+## 已完成项（v0.1.0-alpha.2 已修复）
 
-### P-002 规范文档修复：Created-By 名称统一
+以下问题在 v0.1.0-alpha.2 中全部修复并通过验证，详见测试报告 `docs/test/problems/0.1.0-alpha.2.md`。
 
-**来源**：设计标准合规性问题 P-002
-**说明**：MANIFEST.MF 中 `Created-By` 字段，代码使用 `unicodex`，规范文档示例使用 `unicodex-cli`。开发者确认代码正确，需要更新规范文档 `01-file-structure.md` 和 `07-versioning.md` 中的示例。
-**优先级**：中等
-**计划阶段**：Phase 2（规范文档修订）
+| 编号 | 描述 | 修复提交 |
+|------|------|---------|
+| NEW-001 | name/author 字段拒绝换行符（\n \r） | `fix(NEW-001)` |
+| NEW-002 | 清理冗余 WARN 日志输出 | `fix(NEW-002)` |
+| P-002 | 规范文档 Created-By 名称统一为 `unicodex` | `fix(P-002)` |
+| P-003 | `ucx init` 自动初始化 Git 仓库 + `.gitignore`（`--no-git` 可跳过） | `fix(P-003)` |
+| P-004 | `ucx init` 目录结构精简（默认仅 `content/`，`--full` 完整结构） | `fix(P-004)` |
+| P-007 | codex.json `dates` 字段（init 自动 `created`，build 自动 `modified`） | `fix(P-007)` |
+| P-009 | unicodex.toml 模板增强（注释示例段） | `fix(P-009)` |
+| UX-002 | BCP 47 语言标签验证 | `fix(UX-002)` |
+| UX-003 | `ucx init` 非空目录确认提示（`--yes` 跳过） | `fix(UX-003)` |
+| UX-006 | `ucx info` 输出增强（文件大小、版本、章节数等） | `fix(UX-006)` |
+| UX-007 | `ucx build` 覆盖文件确认提示（`--force` 跳过） | `fix(UX-007)` |
+| SEC-002 | 输入长度限制 500 字符（`--allow-long-fields` 覆盖） | `fix(SEC-002)` |
+| BUG-002 | 默认值本地化（"无标题"/"未知"） | `fix(BUG-002)` |
+| SUG-001 | 交互式 init 模式（`--interactive` / `-i`） | `feat(SUG-001)` |
+| SUG-002 | `ucx init --from-existing` 从现有目录初始化 | `feat(SUG-002)` |
+| SUG-003 | `ucx info --json` 机器可读输出 | `feat(SUG-003)` |
+| SUG-004 | `ucx build --dry-run` 预览打包内容 | `feat(SUG-004)` |
+| SUG-005 | `ucx verify` 输出增强（计时、`--verbose`、无签名提示） | `feat(SUG-005)` |
+| SUG-006 | `ucx check` 项目校验命令 | `feat(SUG-006)` |
+| SUG-007 | chapter-001.md 引导内容增强 | `fix(SUG-007)` |
 
-### P-003 `ucx init` 自动初始化 Git 仓库
+---
 
-**来源**：设计标准合规性问题 P-003
-**说明**：`ucx init` 应调用 `git2::Repository::init()` 自动初始化 Git 仓库，生成 `.gitignore`（至少包含 `dist/`），并提供 `--no-git` 选项跳过。
-**优先级**：中等
-**依赖**：ucx-version 模块（git2 集成）
-**计划阶段**：Phase 2
-
-### P-004 `ucx init` 目录结构优化
-
-**来源**：设计标准合规性问题 P-004
-**说明**：减少 `ucx init` 创建的冗余目录。最简初始化只创建 `content/`，`dist/` 由 `ucx build` 按需创建。可提供 `--full` 和 `--template` 选项。
-**优先级**：中等
-**计划阶段**：Phase 2
-
-### P-007 codex.json 添加 `dates` 字段
-
-**来源**：设计标准合规性问题 P-007
-**说明**：`ucx init` 应自动填入 `dates.created`，`ucx build` 应自动更新 `dates.modified`。需要在 `ProjectConfig` 和 `Codex` 类型中添加 dates 相关字段。
-**优先级**：低
-**计划阶段**：Phase 2
+## 仍待开发项
 
 ### P-008 codex.json 添加 `file_version` 字段
 
@@ -45,105 +45,26 @@
 **依赖**：ucx-version 模块
 **计划阶段**：Phase 2
 
-### P-009 unicodex.toml 模板增强
-
-**来源**：设计标准合规性问题 P-009
-**说明**：`ucx init` 生成的模板应包含被注释掉的可选段示例（`[description]`、`[rights]`、`[cover]`、`[rating]`、`[dates]` 等），帮助用户了解所有可用配置项。
-**优先级**：信息
-**计划阶段**：Phase 2
-
-### UX-002 BCP 47 语言标签验证
-
-**来源**：用户体验问题 UX-002
-**说明**：对 `--language` 参数进行基本的 BCP 47 格式验证。可使用 `icu` crate 或手动校验 `xx` / `xx-XX` 格式。
-**优先级**：中等
-**计划阶段**：Phase 2
-
-### UX-003 `ucx init` 默认目录确认提示
-
-**来源**：用户体验问题 UX-003
-**说明**：当 `PATH` 为默认值 `.`（当前目录）且当前目录非空时，提示用户确认。或在初始化成功后显示清晰的提示。
-**优先级**：中等
-**计划阶段**：Phase 2
-
-### UX-006 `ucx info` 输出增强
-
-**来源**：用户体验问题 UX-006
-**说明**：`ucx info` 添加文件大小、UCX 规范版本、构建工具版本、章节总数、字数统计、作品状态等信息。
-**优先级**：低
-**计划阶段**：Phase 2
-
-### UX-007 `ucx build` 覆盖提示
-
-**来源**：用户体验问题 UX-007
-**说明**：覆盖已有 `.ucx` 文件时显示简短提示，或提供 `--force` 标志用于静默覆盖。
-**优先级**：信息
-**计划阶段**：Phase 2
-
-### SEC-002 超长输入限制
-
-**来源**：安全与健壮性问题 SEC-002
-**说明**：对 `--name`、`--author` 等参数设置合理长度上限。开发者批注建议保留超长兼容性，通过 `--name-long` / `--author-long` 参数启用，需补充到标准文档。
-**优先级**：中等
-**计划阶段**：Phase 2（需同步更新规范文档）
-
-### BUG-002 默认值本地化
-
-**来源**：功能缺陷 BUG-002
-**说明**：`ucx init` 的 `--name` 默认值 "Untitled" 和 `--author` 默认值 "Unknown" 考虑根据默认语言本地化。
-**优先级**：低
-**计划阶段**：Phase 2
-
 ---
-
-## Phase 3+ 计划项
 
 ### SEC-004 签名机制实现
 
 **来源**：安全与健壮性问题 SEC-004
-**说明**：完整性保护当前仅依靠 MANIFEST.MF 哈希，签名机制（Layer 1 和 Layer 2）需在 Phase 3 的 ucx-sign 模块中实现。`ucx verify` 应在无签名时提示用户。
+**说明**：完整性保护当前仅依靠 MANIFEST.MF 哈希，签名机制（Layer 1 和 Layer 2）需在 Phase 3 的 ucx-sign 模块中实现。`ucx verify` 已在无签名时提示用户（SUG-005 修复）。
 **优先级**：信息（Phase 1 已知限制）
 **计划阶段**：Phase 3
 
 ---
 
-## 建议性改进
+## Phase 2+ 新功能计划
 
-### SUG-001 交互式 init 模式
+以下为非 bug-fix 的新功能计划，待后续版本实施：
 
-`ucx init --interactive` — 交互式创建，引导用户输入书名、作者、语言、体裁等信息。
-**计划阶段**：Phase 2
-
-### SUG-002 `ucx init --from-existing`
-
-从现有目录初始化 UCX 项目。
-**计划阶段**：Phase 2
-
-### SUG-003 `ucx info --json`
-
-添加 `--json` 标志以机器可读格式输出信息。
-**计划阶段**：Phase 2
-
-### SUG-004 `ucx build --dry-run`
-
-仅展示将要打包的文件列表和输出路径，不实际创建文件。
-**计划阶段**：Phase 2
-
-### SUG-005 `ucx verify` 输出增强
-
-无签名时明确提示，显示验证耗时，支持 `--verbose` 显示详细哈希。
-**计划阶段**：Phase 2-3
-
-### SUG-006 `ucx check` 命令
-
-独立的项目检查命令，验证 unicodex.toml 格式、struct.json 完整性、BCP 47 标签等。
-**计划阶段**：Phase 2
-
-### SUG-007 chapter-001.md 内容引导
-
-生成的示例章节包含更多引导信息（格式说明、Markdown 语法提示等）。
-**计划阶段**：Phase 2
+- `ucx unpack` — 解包 UCX 文件到项目目录
+- `ucx version` — 基于 git2 的自动版本号管理
+- `ucx init --template` — 模板选择（小说、散文、诗歌等）
+- CI/CD 流水线配置
 
 ---
 
-*本文件由 v0.1.0-alpha.1 测试报告自动生成，随开发进度持续更新。*
+*本文件由测试报告生成，于 v0.1.0-alpha.2 修复周期后更新。*

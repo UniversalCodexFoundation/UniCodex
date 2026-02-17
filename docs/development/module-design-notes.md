@@ -29,7 +29,7 @@ pub struct Structure { schema, version, structure: Vec<StructureNode> }
 pub struct StructureNode { title, file, children, node_type, id, name, style, encryption }
 pub struct Manifest { manifest_version, ucx_version, created_by, hash_algorithm, entries }
 pub struct ManifestEntry { name, size, digest }
-pub struct ProjectConfig { project, identifier, title, series, creators, publisher, book, description, rights, cover, rating, build, signing }
+pub struct ProjectConfig { project, identifier, title, series, creators, publisher, book, description, rights, cover, rating, dates, build, signing }
 pub struct UcxId(String)  // format: urn:ucx:{UUID v4}
 pub enum HashAlgorithm { Blake3, Sha256, Sha512 }
 ```
@@ -46,20 +46,37 @@ pub enum HashAlgorithm { Blake3, Sha256, Sha512 }
 
 **定位**：仅作为 CLI 入口，不包含业务逻辑。编译产物为 `ucx` 命令。
 
-**实现状态**：Phase 1 命令已连接（init、build、info、verify）
+**实现状态**：Phase 1 命令已连接（init、build、info、verify、check）
 
 **设计思路**：
 - 使用 `clap` derive 宏定义子命令结构
 - 每个子命令代理到对应模块的公开 API
 - 错误处理使用 `anyhow`，将各模块的 `thiserror` 错误统一转换
-- 日志初始化在 main.rs 中完成（`tracing-subscriber`）
+- 日志初始化在 main.rs 中完成（`tracing-subscriber`，无时间戳、无 target）
 
 **已实现子命令**：
 ```
-ucx init <path> --name --author --language    → ucx_init::init()
-ucx build <path> --output-dir --output-name   → ucx_build::build()
-ucx info <file>                                → ucx_parse::open() + 格式化输出
-ucx verify <file>                              → ucx_parse::open() + verify_hashes()
+ucx init <path>                        → ucx_init::init() / init_from_existing()
+    --name --author --language         基础参数
+    --allow-long-fields                SEC-002 超长字段覆盖
+    --full                             P-004 完整目录结构
+    --no-git                           P-003 跳过 Git 初始化
+    --yes / -y                         UX-003 跳过确认提示
+    --interactive / -i                 SUG-001 交互式模式
+    --from-existing                    SUG-002 从现有文件初始化
+
+ucx build <path>                       → ucx_build::build() / dry_run()
+    --output-dir --output-name         输出路径覆盖
+    --force / -f                       UX-007 强制覆盖
+    --dry-run                          SUG-004 预演模式
+
+ucx info <file>                        → ucx_parse::open() + 格式化输出
+    --json                             SUG-003 JSON 格式输出
+
+ucx verify <file>                      → ucx_parse::open() + verify_hashes()
+    --verbose / -v                     SUG-005 详细哈希信息
+
+ucx check <path>                       → ucx_build::check()
 ```
 
 **待实现子命令**：
@@ -70,6 +87,11 @@ ucx sign       → Phase 3（ucx-sign）
 ucx encrypt    → Phase 4（ucx-crypto）
 ucx decrypt    → Phase 4（ucx-crypto）
 ```
+
+**辅助函数**：
+- `prompt_with_default()` — 交互式提示（带默认值）
+- `print_structure_tree()` — 递归打印结构树
+- `format_file_size()` — 人类可读文件大小格式化
 
 **集成测试**：4 个往返测试（unicodex-core/tests/round_trip.rs）
 
@@ -85,6 +107,7 @@ ucx decrypt    → Phase 4（ucx-crypto）
 ```rust
 pub struct UcxArchive {
     archive: ZipArchive<BufReader<File>>,  // 内部 ZIP reader
+    file_path: PathBuf,                     // 原始文件路径
     codex: Codex,                           // 缓存的元数据
     structure: Structure,                   // 缓存的结构
     manifest: Manifest,                     // 缓存的清单
@@ -102,6 +125,8 @@ impl UcxArchive {
     pub fn codex(&self) -> &Codex;
     pub fn structure(&self) -> &Structure;
     pub fn manifest(&self) -> &Manifest;
+    pub fn file_size(&self) -> u64;                                    // UX-006
+    pub fn chapter_count(&self) -> usize;                              // UX-006
     pub fn read_chapter(&mut self, file: &str) -> Result<String, ParseError>;
     pub fn verify_hashes(&mut self) -> Result<Vec<HashVerifyResult>, ParseError>;
     pub fn list_files(&self) -> Vec<String>;
@@ -132,21 +157,29 @@ impl UcxArchive {
 **模块结构**：
 ```
 ucx-build/src/
-├── lib.rs         — 公开 API (build 函数、BuildOptions、BuildError)
+├── lib.rs         — 公开 API (build、dry_run、check、resolve_output_path、BuildOptions、BuildError)
 ├── archive.rs     — ZIP 归档创建（文件收集、哈希计算、MANIFEST.MF 生成）
-└── convert.rs     — ProjectConfig → Codex 转换
+└── convert.rs     — ProjectConfig → Codex 转换（含 dates 自动填充）
 ```
 
 **公开 API**：
 ```rust
 pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, BuildError>;
+pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResult, BuildError>;
+pub fn check(project_path: &Path) -> Result<CheckResult, BuildError>;
+pub fn resolve_output_path(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, BuildError>;
 pub fn config_to_codex(config: &ProjectConfig) -> Codex;
 
 pub struct BuildOptions {
     pub output_dir: Option<PathBuf>,    // 覆盖输出目录
     pub output_name: Option<String>,    // 覆盖输出文件名
+    pub dry_run: bool,                  // 预演模式（仅校验不打包）
 }
 
+pub struct DryRunResult { output_path, files: Vec<DryRunFile>, total_size }
+pub struct DryRunFile { archive_path, size }
+pub struct CheckResult { items: Vec<CheckItem> }
+pub struct CheckItem { name, passed, message }
 pub enum BuildError { ConfigNotFound, ConfigParse, InvalidStructure, Io, Zip, Serialization }
 ```
 
@@ -254,29 +287,50 @@ pub enum BuildError { ConfigNotFound, ConfigParse, InvalidStructure, Io, Zip, Se
 
 **定位**：创建新的 UCX 项目目录结构。
 
-**实现状态**：已完成（4 单元测试 + 1 doctest）
+**实现状态**：已完成（14 单元测试 + 1 doctest）
 
 **公开 API**：
 ```rust
 pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError>;
+pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), InitError>;
 
-pub struct InitOptions { pub name: String, pub author: String, pub language: String }
-pub enum InitError { AlreadyExists, Io, TomlSerialize, JsonSerialize }
+pub struct InitOptions {
+    pub name: String,             // 作品名称（默认 "无标题"）
+    pub author: String,           // 作者名称（默认 "未知"）
+    pub language: String,         // BCP 47 语言标签（默认 "zh-CN"）
+    pub allow_long_fields: bool,  // 允许超过 500 字符的输入
+    pub full: bool,               // 创建完整目录结构（含 assets/、extras/）
+    pub no_git: bool,             // 跳过 Git 仓库初始化
+}
+
+pub enum InitError { AlreadyExists, Io, TomlSerialize, JsonSerialize, InvalidInput }
 ```
 
-**初始化流程**：
+**初始化流程（`init`）**：
 1. 检查 `unicodex.toml` 是否已存在（已存在则返回 AlreadyExists）
 2. 创建项目根目录（如果不存在）
-3. 创建标准子目录：content/、assets/、extras/、dist/
+3. 创建子目录：默认仅 `content/`，`--full` 时添加 `assets/`、`extras/`
 4. 生成 UCX ID（UUID v4）
-5. 生成 `unicodex.toml`（通过 ProjectConfig 序列化）
+5. 生成 `unicodex.toml`（通过 ProjectConfig 序列化 + 注释示例段）
 6. 生成 `content/struct.json`（一个示例章节节点）
-7. 生成 `content/chapter-001.md`（起始章节模板）
+7. 生成 `content/chapter-001.md`（引导性内容模板 + UCX 提示注释）
+8. 初始化 Git 仓库 + `.gitignore`（`--no-git` 跳过）
+
+**初始化流程（`init_from_existing`）**：
+1. 扫描目录中的 .md 文件
+2. 移动到 `content/` 目录
+3. 自动生成 `content/struct.json`
+4. 执行标准 init 流程（步骤 4-5, 8）
+
+**输入验证**：
+- `validate_input()`：空字符串检查、控制字符（含 `\n`/`\r`）检查、长度限制 500 字符
+- `validate_language_tag()`：BCP 47 基本格式验证（2-3 字母主标签 + 可选子标签）
 
 **设计考量**：
 - 幂等性检查：已存在 unicodex.toml 时立即返回错误，不修改任何文件
 - `create_dir_all` 是幂等的，目录已存在时安全
-- 默认 build 输出目录为 "dist"
+- 默认值已本地化为中文（"无标题"/"未知"）
+- `dates.created` 自动填入 init 日期
 
 ---
 
