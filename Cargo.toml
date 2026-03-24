@@ -40,7 +40,7 @@ members = [
 # 所有工作区成员通过 `field.workspace = true` 继承这些值。
 # =============================================================================
 [workspace.package]
-version = "0.1.0-alpha.2"
+version = "0.2.0-alpha.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/unicodex/unicodex"
@@ -80,7 +80,7 @@ ed25519-dalek = "2.2"                                # Ed25519 signatures / Ed25
 zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作
 
 # --- Version control / 版本控制 ---
-git2 = "0.20"                                        # libgit2 Rust bindings / libgit2 的 Rust 绑定
+git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }  # libgit2 Rust bindings (vendored for CI) / libgit2 的 Rust 绑定（vendored 用于 CI 跨平台编译）
 
 # --- Serialization / 序列化 ---
 serde = { version = "1.0", features = ["derive"] }   # Serialization framework / 序列化框架
@@ -113,3 +113,16 @@ tempfile = "3"                                        # Temporary files for test
 
 # --- Date/time / 日期时间 ---
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # Date formatting for dates field / dates 字段的日期格式化
+
+# =============================================================================
+# Release profile / 发布构建配置
+# =============================================================================
+# Optimized settings for release builds: maximum optimization, smallest binary.
+# 发布构建的优化配置：最大优化等级，最小二进制体积。
+# =============================================================================
+[profile.release]
+opt-level = 3       # Maximum optimization level / 最大优化等级
+lto = "fat"         # Full LTO for smallest binary size / 完整 LTO，最小二进制体积
+codegen-units = 1   # Single codegen unit for maximum optimization / 单 codegen unit，最大化优化
+panic = "abort"     # Abort on panic, reduces binary size / 终止式 panic，减小体积
+strip = true        # Strip debug symbols / 去除调试符号

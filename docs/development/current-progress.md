@@ -167,4 +167,62 @@
 
 ---
 
+### 2026-03-25 — Phase 2 完成：版本管理模块（v0.2.0-alpha.1）
+
+**完成事项**：
+
+1. **ucx-types 类型扩展**
+   - `FileVersion` struct（version, revision, released_at, changelog）
+   - `VersionSection` struct（strategy, auto_on_build, semantic）
+   - Codex 新增 `file_version: Option<FileVersion>`
+   - ProjectConfig 新增 `version_config: Option<VersionSection>`
+
+2. **ucx-version 模块完整实现**（从 placeholder 到生产代码）
+   - `UcxVersion` struct（parse/display/serde）+ `ChangeSet` + `ChangeKind` enum
+   - `snapshot.rs`：基于 BLAKE3 的文件快照变更检测（Git 不可用时的回退方案）
+   - `git.rs`：git2 变更检测（find_latest_ucx_tag, diff_tree_to_tree, create_version_tag）
+   - `bump.rs`：struct.json 结构分析 + 版本计算（classify_changes, compute_next_version）
+   - `detect_changes()`：git2 优先 + snapshot 回退策略
+   - `auto_version()`：自动版本升级（NewVolume/NewChapter/ModificationOnly/NoChange）
+   - 手动 bump 函数：bump_patch, bump_chapter, bump_volume
+
+3. **ucx-build 管线集成**
+   - `config_to_codex_with_version()`：支持注入 file_version
+   - `resolve_file_version()`：构建时自动版本解析
+   - 构建完成后自动更新 .ucx-snapshot.json
+   - 支持 `[version] auto_on_build = true` 配置
+
+4. **CLI ucx version 子命令**
+   - `ucx version` — 显示当前版本
+   - `ucx version auto` — 自动检测变更并升级
+   - `ucx version patch` — 手动修订升级（Z+1）
+   - `ucx version chapter` — 手动章节升级
+   - `ucx version volume` — 手动卷升级
+   - `ucx version set X.Y.Z` — 强制设定版本
+   - 版本状态持久化到 `.ucx-version.json`
+
+**测试汇总**：122 tests（全部通过）
+- ucx-types: 36 tests（+5 新增）
+- ucx-version: 40 tests（+38 新增，从 2 个 placeholder 测试扩展）
+- ucx-build: 16 tests（+3 新增）
+- ucx-init: 13 tests
+- ucx-parse: 6 tests
+- unicodex-core: 4 integration tests
+- 其他: 7 tests (doctests + placeholders)
+
+**关键技术决策**：
+- ADR-003 落地：git2 变更检测 + snapshot 回退，无需系统安装 Git
+- ADR-005 落地：卷.章.修订版本语义实现
+- `.ucx-version.json` 持久化版本状态（跨命令传递）
+- `.ucx-snapshot.json` 持久化文件快照（Git 不可用时使用）
+
+**P-008 已解决**：codex.json 支持 `file_version` 字段
+
+**下一步**：
+- Phase 3：ucx-sign（双层签名）、ucx-verify 签名验证、SEC-004
+- Phase 4：ucx-crypto（加密/解密）
+- `ucx unpack` 解包命令
+
+---
+
 *后续开发进度将追加在此文档中*
