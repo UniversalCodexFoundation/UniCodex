@@ -172,10 +172,17 @@ enum Commands {
     /// Manage version numbers.
     /// 管理版本号。
     Version {
-        /// Arguments placeholder (command not yet implemented).
-        /// 参数占位（命令尚未实现）。
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
+        /// Version subcommand (auto, patch, chapter, volume, set).
+        /// If omitted, shows the current version.
+        /// 版本子命令（auto、patch、chapter、volume、set）。
+        /// 省略时显示当前版本。
+        #[command(subcommand)]
+        action: Option<VersionAction>,
+
+        /// Project directory path (default: current directory).
+        /// 项目目录路径（默认：当前目录）。
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
 
     /// Encrypt chapters or resources.
@@ -194,6 +201,36 @@ enum Commands {
         /// 参数占位（命令尚未实现）。
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         _args: Vec<String>,
+    },
+}
+
+/// Subcommands for `ucx version`.
+///
+/// `ucx version` 的子命令。
+#[derive(Subcommand)]
+enum VersionAction {
+    /// Automatically detect changes and bump the version.
+    /// 自动检测变更并升级版本号。
+    Auto,
+
+    /// Bump the patch version (Z + 1).
+    /// 升级修订版本（Z + 1）。
+    Patch,
+
+    /// Bump to a new chapter version (Y = new chapter number, Z = 0).
+    /// 升级到新章节版本（Y = 新章节编号, Z = 0）。
+    Chapter,
+
+    /// Bump to a new volume version (X + 1, Z = 0).
+    /// 升级到新卷版本（X + 1, Z = 0）。
+    Volume,
+
+    /// Set the version to a specific X.Y.Z value.
+    /// 将版本设置为指定的 X.Y.Z 值。
+    Set {
+        /// The version string in X.Y.Z format.
+        /// X.Y.Z 格式的版本字符串。
+        version: String,
     },
 }
 
@@ -586,8 +623,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Sign { .. } => {
             println!("ucx sign: not yet implemented (planned for Phase 3)");
         }
-        Commands::Version { .. } => {
-            println!("ucx version: not yet implemented (planned for Phase 2)");
+        Commands::Version { action, path } => {
+            handle_version_command(action, &path)?;
         }
         Commands::Encrypt { .. } => {
             println!("ucx encrypt: not yet implemented (planned for Phase 4)");
@@ -682,4 +719,189 @@ fn format_file_size(bytes: u64) -> String {
     } else {
         format!("{:.1} GB", size / GB)
     }
+}
+
+// =============================================================================
+// Version command implementation / 版本命令实现
+// =============================================================================
+
+/// The `.ucx-version.json` file name for persisting version state.
+/// 持久化版本状态的 `.ucx-version.json` 文件名。
+const VERSION_STATE_FILE: &str = ".ucx-version.json";
+
+/// Load the current version state from `.ucx-version.json`.
+///
+/// Returns `None` if the file does not exist.
+///
+/// 从 `.ucx-version.json` 加载当前版本状态。
+/// 文件不存在时返回 `None`。
+fn load_version_state(project_path: &std::path::Path) -> anyhow::Result<Option<ucx_types::FileVersion>> {
+    let path = project_path.join(VERSION_STATE_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let fv: ucx_types::FileVersion = serde_json::from_str(&content)?;
+    Ok(Some(fv))
+}
+
+/// Save the version state to `.ucx-version.json`.
+///
+/// 将版本状态保存到 `.ucx-version.json`。
+fn save_version_state(
+    project_path: &std::path::Path,
+    file_version: &ucx_types::FileVersion,
+) -> anyhow::Result<()> {
+    let path = project_path.join(VERSION_STATE_FILE);
+    let json = serde_json::to_string_pretty(file_version)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+/// Build a `FileVersion` from a `UcxVersion` and an optional previous state.
+///
+/// Increments the revision counter and updates the released_at timestamp.
+///
+/// 从 `UcxVersion` 和可选的先前状态构建 `FileVersion`。
+/// 递增修订计数器并更新 released_at 时间戳。
+fn build_file_version(
+    version: &ucx_version::UcxVersion,
+    previous: Option<&ucx_types::FileVersion>,
+) -> ucx_types::FileVersion {
+    let prev_revision = previous
+        .and_then(|fv| fv.revision)
+        .unwrap_or(0);
+    ucx_types::FileVersion {
+        version: Some(version.to_string()),
+        revision: Some(prev_revision + 1),
+        released_at: Some(chrono::Utc::now().to_rfc3339()),
+        changelog: None,
+    }
+}
+
+/// Handle the `ucx version` command.
+///
+/// 处理 `ucx version` 命令。
+fn handle_version_command(
+    action: Option<VersionAction>,
+    project_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let project_path = std::fs::canonicalize(project_path)?;
+
+    match action {
+        None => {
+            // Show current version.
+            // 显示当前版本。
+            let state = load_version_state(&project_path)?;
+            match state {
+                Some(fv) => {
+                    let ver = fv.version.as_deref().unwrap_or("(unset)");
+                    let rev = fv.revision.map_or("(unset)".to_string(), |r| r.to_string());
+                    let at = fv.released_at.as_deref().unwrap_or("(unknown)");
+                    println!("File version: {ver}");
+                    println!("Revision:     {rev}");
+                    println!("Released at:  {at}");
+                    if let Some(log) = &fv.changelog {
+                        println!("Changelog:    {log}");
+                    }
+                }
+                None => {
+                    println!("No version set. Use 'ucx version auto' or 'ucx version set X.Y.Z'.");
+                }
+            }
+        }
+        Some(VersionAction::Auto) => {
+            // Auto-detect changes and bump version.
+            // 自动检测变更并升级版本。
+            let (current, changes) = ucx_version::detect_changes(&project_path)?;
+            println!("Current version: {current}");
+            println!("Changes: {} added, {} modified, {} deleted",
+                changes.added.len(), changes.modified.len(), changes.deleted.len());
+
+            let next = ucx_version::auto_version(&current, &changes, &project_path)?;
+            if next == current && !changes.is_empty() {
+                println!("Version unchanged: {current}");
+            } else if changes.is_empty() {
+                println!("No changes detected. Version stays at {current}");
+            } else {
+                println!("Version bump: {current} → {next}");
+                let prev_state = load_version_state(&project_path)?;
+                let fv = build_file_version(&next, prev_state.as_ref());
+                save_version_state(&project_path, &fv)?;
+                println!("Saved to {VERSION_STATE_FILE} (revision {})", fv.revision.unwrap_or(0));
+            }
+        }
+        Some(VersionAction::Patch) => {
+            // Manual patch bump.
+            // 手动修订升级。
+            let state = load_version_state(&project_path)?;
+            let current = state
+                .as_ref()
+                .and_then(|fv| fv.version.as_deref())
+                .map(|v| ucx_version::UcxVersion::parse(v))
+                .transpose()?
+                .unwrap_or_else(ucx_version::UcxVersion::zero);
+
+            let next = ucx_version::bump::bump_patch(&current);
+            println!("Version bump: {current} → {next}");
+            let fv = build_file_version(&next, state.as_ref());
+            save_version_state(&project_path, &fv)?;
+            println!("Saved to {VERSION_STATE_FILE}");
+        }
+        Some(VersionAction::Chapter) => {
+            // Manual chapter bump — read struct.json for chapter count.
+            // 手动章节升级 — 读取 struct.json 获取章节数。
+            let state = load_version_state(&project_path)?;
+            let current = state
+                .as_ref()
+                .and_then(|fv| fv.version.as_deref())
+                .map(|v| ucx_version::UcxVersion::parse(v))
+                .transpose()?
+                .unwrap_or_else(ucx_version::UcxVersion::zero);
+
+            let struct_path = project_path.join("content").join("struct.json");
+            let chapter_num = if struct_path.exists() {
+                let content = std::fs::read_to_string(&struct_path)?;
+                let structure: ucx_types::Structure = serde_json::from_str(&content)?;
+                ucx_version::bump::find_latest_chapter_number(&structure)
+            } else {
+                current.chapter + 1
+            };
+
+            let next = ucx_version::bump::bump_chapter(&current, chapter_num);
+            println!("Version bump: {current} → {next}");
+            let fv = build_file_version(&next, state.as_ref());
+            save_version_state(&project_path, &fv)?;
+            println!("Saved to {VERSION_STATE_FILE}");
+        }
+        Some(VersionAction::Volume) => {
+            // Manual volume bump.
+            // 手动卷升级。
+            let state = load_version_state(&project_path)?;
+            let current = state
+                .as_ref()
+                .and_then(|fv| fv.version.as_deref())
+                .map(|v| ucx_version::UcxVersion::parse(v))
+                .transpose()?
+                .unwrap_or_else(ucx_version::UcxVersion::zero);
+
+            let next = ucx_version::bump::bump_volume(&current, 1);
+            println!("Version bump: {current} → {next}");
+            let fv = build_file_version(&next, state.as_ref());
+            save_version_state(&project_path, &fv)?;
+            println!("Saved to {VERSION_STATE_FILE}");
+        }
+        Some(VersionAction::Set { version }) => {
+            // Set version to a specific value.
+            // 设置为指定版本。
+            let parsed = ucx_version::UcxVersion::parse(&version)?;
+            println!("Setting version to {parsed}");
+            let prev_state = load_version_state(&project_path)?;
+            let fv = build_file_version(&parsed, prev_state.as_ref());
+            save_version_state(&project_path, &fv)?;
+            println!("Saved to {VERSION_STATE_FILE}");
+        }
+    }
+
+    Ok(())
 }

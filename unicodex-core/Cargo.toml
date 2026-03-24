@@ -58,6 +58,9 @@ tracing-subscriber = { workspace = true }
 # --- Serialization / 序列化 ---
 serde_json = { workspace = true }         # JSON output for ucx info --json / ucx info --json 的 JSON 输出
 
+# --- Date/Time / 日期时间 ---
+chrono = { workspace = true }             # Timestamps for version management / 版本管理时间戳
+
 [dev-dependencies]
 # --- Testing / 测试 ---
 tempfile = { workspace = true }           # Temporary directories for integration tests / 集成测试用临时目录
