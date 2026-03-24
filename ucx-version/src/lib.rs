@@ -11,6 +11,7 @@
 //! 通过 git2（libgit2 Rust 绑定）检测变更并自动生成版本号。
 //! 无 Git 仓库时回退为文件快照 diff。
 
+pub mod git;
 pub mod snapshot;
 
 use thiserror::Error;
@@ -219,11 +220,53 @@ pub enum ChangeKind {
 /// Returns a tuple of (current_version, changes), or a `VersionError` on failure.
 /// 返回 (当前版本, 变更集) 元组，或在失败时返回 `VersionError`。
 pub fn detect_changes(
-    _project_path: &std::path::Path,
+    project_path: &std::path::Path,
 ) -> Result<(UcxVersion, ChangeSet), VersionError> {
-    // TODO: Implement in Step 4 — git2-based detection with snapshot fallback.
-    // TODO: 在 Step 4 中实现 — 基于 git2 的检测与快照回退。
-    todo!("ucx-version: change detection not yet implemented (Step 4)")
+    // Try git2-based detection first.
+    // 首先尝试基于 git2 的检测。
+    match git::detect_changes_git(project_path) {
+        Ok(result) => {
+            tracing::debug!("Change detection via git2 succeeded");
+            Ok(result)
+        }
+        Err(VersionError::GitError(e)) => {
+            // Git not available — fall back to snapshot-based detection.
+            // Git 不可用 — 回退到基于快照的检测。
+            tracing::info!("Git not available ({e}), falling back to snapshot detection");
+            detect_changes_snapshot(project_path)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Fallback: detect changes using `.ucx-snapshot.json` when Git is unavailable.
+///
+/// 回退方案：当 Git 不可用时，使用 `.ucx-snapshot.json` 检测变更。
+fn detect_changes_snapshot(
+    project_path: &std::path::Path,
+) -> Result<(UcxVersion, ChangeSet), VersionError> {
+    let old_snapshot = snapshot::Snapshot::load(project_path)?;
+    let current = snapshot::Snapshot::compute_current(project_path, "0.0.0")?;
+
+    match old_snapshot {
+        Some(old) => {
+            // Parse the version from the old snapshot.
+            // 从旧快照解析版本。
+            let version = UcxVersion::parse(&old.version).unwrap_or_else(|_| UcxVersion::zero());
+            let changes = old.diff(&current);
+            Ok((version, changes))
+        }
+        None => {
+            // No previous snapshot — all current content files are "added".
+            // 无先前快照 — 所有当前内容文件视为"新增"。
+            let changes = ChangeSet {
+                added: current.files.keys().cloned().collect(),
+                modified: vec![],
+                deleted: vec![],
+            };
+            Ok((UcxVersion::zero(), changes))
+        }
+    }
 }
 
 /// Automatically generate the next version number based on detected changes.
@@ -373,5 +416,47 @@ mod tests {
         };
         assert!(!cs.is_empty());
         assert_eq!(cs.total(), 2);
+    }
+
+    // -------------------------------------------------------------------------
+    // detect_changes integration tests / detect_changes 集成测试
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn detect_changes_no_git_no_snapshot() {
+        // In a directory without Git or snapshot, all content files are "added".
+        // 在没有 Git 或快照的目录中，所有内容文件视为"新增"。
+        let dir = tempfile::tempdir().unwrap();
+        let content_dir = dir.path().join("content");
+        std::fs::create_dir_all(&content_dir).unwrap();
+        std::fs::write(content_dir.join("ch-001.md"), "# 第一章").unwrap();
+
+        let (version, changes) = detect_changes(dir.path()).unwrap();
+        assert_eq!(version, UcxVersion::zero());
+        assert_eq!(changes.added.len(), 1);
+        assert!(changes.added[0].contains("ch-001.md"));
+    }
+
+    #[test]
+    fn detect_changes_no_git_with_snapshot() {
+        // With a snapshot but no Git, changes are detected by comparing hashes.
+        // 有快照但无 Git 时，通过比较哈希检测变更。
+        let dir = tempfile::tempdir().unwrap();
+        let content_dir = dir.path().join("content");
+        std::fs::create_dir_all(&content_dir).unwrap();
+        std::fs::write(content_dir.join("ch-001.md"), "# 第一章").unwrap();
+
+        // Create a snapshot of the current state.
+        // 创建当前状态的快照。
+        let snap = snapshot::Snapshot::compute_current(dir.path(), "1.0.0").unwrap();
+        snap.save(dir.path()).unwrap();
+
+        // Modify the file.
+        // 修改文件。
+        std::fs::write(content_dir.join("ch-001.md"), "# 第一章（修改后）").unwrap();
+
+        let (version, changes) = detect_changes(dir.path()).unwrap();
+        assert_eq!(version, UcxVersion::new(1, 0, 0));
+        assert!(changes.modified.contains(&"content/ch-001.md".to_string()));
     }
 }
