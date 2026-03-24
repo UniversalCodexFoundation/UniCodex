@@ -7,7 +7,7 @@
 //! 将开发时的 `unicodex.toml`（ProjectConfig）转换为
 //! 运行时的 `metadata/codex.json`（Codex）格式，用于打包到 UCX 归档中。
 
-use ucx_types::codex::{Codex, Dates, Description, Identifier, Rights, Title};
+use ucx_types::codex::{Codex, Dates, Description, FileVersion, Identifier, Rights, Title};
 use ucx_types::project::ProjectConfig;
 
 // =============================================================================
@@ -177,6 +177,29 @@ pub fn config_to_codex(config: &ProjectConfig) -> Codex {
     }
 }
 
+/// Convert a `ProjectConfig` to a `Codex`, injecting the given `file_version`.
+///
+/// This is the primary conversion function used during build when version
+/// information is available from the `ucx-version` module.
+///
+/// 将 `ProjectConfig` 转换为 `Codex`，同时注入指定的 `file_version`。
+/// 这是构建过程中 ucx-version 模块提供版本信息时使用的主要转换函数。
+///
+/// # Arguments / 参数
+///
+/// * `config` - The project configuration from `unicodex.toml`.
+///              来自 `unicodex.toml` 的项目配置。
+/// * `file_version` - The file version to inject into `codex.json`.
+///                     要注入到 `codex.json` 中的文件版本。
+pub fn config_to_codex_with_version(
+    config: &ProjectConfig,
+    file_version: Option<FileVersion>,
+) -> Codex {
+    let mut codex = config_to_codex(config);
+    codex.file_version = file_version;
+    codex
+}
+
 // =============================================================================
 // Tests / 测试
 // =============================================================================
@@ -339,5 +362,37 @@ mod tests {
         // 验证可以通过反序列化往返。
         let _: ucx_types::Codex =
             serde_json::from_str(&json).expect("codex JSON should deserialize");
+    }
+
+    #[test]
+    fn test_config_to_codex_default_no_file_version() {
+        // config_to_codex should produce a Codex with file_version = None.
+        // config_to_codex 应生成 file_version = None 的 Codex。
+        let config = test_config();
+        let codex = config_to_codex(&config);
+        assert!(codex.file_version.is_none());
+    }
+
+    #[test]
+    fn test_config_to_codex_with_version_injects_file_version() {
+        // config_to_codex_with_version should inject the given FileVersion.
+        // config_to_codex_with_version 应注入给定的 FileVersion。
+        let config = test_config();
+        let fv = FileVersion {
+            version: Some("1.5.0".to_string()),
+            revision: Some(3),
+            released_at: Some("2026-03-25T00:00:00Z".to_string()),
+            changelog: Some("新增第五章".to_string()),
+        };
+        let codex = config_to_codex_with_version(&config, Some(fv.clone()));
+        let result = codex.file_version.as_ref().unwrap();
+        assert_eq!(result.version.as_deref(), Some("1.5.0"));
+        assert_eq!(result.revision, Some(3));
+
+        // Verify it serializes to JSON with file_version present.
+        // 验证序列化后 JSON 包含 file_version。
+        let json = serde_json::to_string_pretty(&codex).unwrap();
+        assert!(json.contains("\"file_version\""));
+        assert!(json.contains("1.5.0"));
     }
 }
