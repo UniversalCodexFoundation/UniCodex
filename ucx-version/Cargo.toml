@@ -43,6 +43,9 @@ walkdir = { workspace = true }
 # --- Date/Time / 日期时间 ---
 chrono = { workspace = true }
 
+# --- Shared types / 共享类型 ---
+ucx-types = { path = "../ucx-types" }
+
 [dev-dependencies]
 # --- Temporary directories for testing / 测试用临时目录 ---
 tempfile = "3"

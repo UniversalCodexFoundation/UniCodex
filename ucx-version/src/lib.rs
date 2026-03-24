@@ -11,6 +11,7 @@
 //! 通过 git2（libgit2 Rust 绑定）检测变更并自动生成版本号。
 //! 无 Git 仓库时回退为文件快照 diff。
 
+pub mod bump;
 pub mod git;
 pub mod snapshot;
 
@@ -293,13 +294,38 @@ fn detect_changes_snapshot(
 /// Returns the new `UcxVersion`, or a `VersionError` on failure.
 /// 返回新的 `UcxVersion`，或在失败时返回 `VersionError`。
 pub fn auto_version(
-    _current: &UcxVersion,
-    _changes: &ChangeSet,
-    _project_path: &std::path::Path,
+    current: &UcxVersion,
+    changes: &ChangeSet,
+    project_path: &std::path::Path,
 ) -> Result<UcxVersion, VersionError> {
-    // TODO: Implement in Step 5 — auto version bump logic.
-    // TODO: 在 Step 5 中实现 — 自动版本升级逻辑。
-    todo!("ucx-version: auto version not yet implemented (Step 5)")
+    // Classify the changes by analyzing struct.json.
+    // 通过分析 struct.json 对变更进行分类。
+    let change_kind = bump::classify_changes(changes, project_path)?;
+    tracing::info!("Change kind: {change_kind:?}");
+
+    // Read the current structure to determine chapter numbers.
+    // 读取当前结构以确定章节编号。
+    let struct_path = project_path.join("content").join("struct.json");
+    let structure = if struct_path.exists() {
+        let content = std::fs::read_to_string(&struct_path).map_err(|e| {
+            VersionError::Structure(format!("failed to read struct.json: {e}"))
+        })?;
+        serde_json::from_str(&content).map_err(|e| {
+            VersionError::Structure(format!("failed to parse struct.json: {e}"))
+        })?
+    } else {
+        // No struct.json — use an empty structure.
+        // 无 struct.json — 使用空结构。
+        ucx_types::Structure {
+            schema: None,
+            version: "1.0".to_string(),
+            structure: vec![],
+        }
+    };
+
+    let next = bump::compute_next_version(current, &change_kind, &structure);
+    tracing::info!("Version bump: {current} → {next}");
+    Ok(next)
 }
 
 // =============================================================================
