@@ -104,6 +104,16 @@ pub struct Codex {
     /// 内容分级信息（可选）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rating: Option<Rating>,
+
+    /// UCX file version information (optional, managed by ucx-version).
+    /// UCX 文件版本信息（可选，由 ucx-version 管理）。
+    ///
+    /// This tracks the work's revision history (volume.chapter.patch),
+    /// not the metadata schema version (which is in the `version` field).
+    /// 此字段追踪作品的修订历史（卷.章.修订），
+    /// 而非元数据 schema 版本（记录在 `version` 字段中）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_version: Option<FileVersion>,
 }
 
 // =============================================================================
@@ -335,6 +345,53 @@ pub struct Rating {
 }
 
 // =============================================================================
+// FileVersion / 文件版本
+// =============================================================================
+
+/// UCX file version information, stored in `codex.json` under `file_version`.
+///
+/// Tracks the work's revision history using the recommended X.Y.Z
+/// (volume.chapter.patch) scheme. All fields are optional to allow
+/// incremental adoption.
+///
+/// UCX 文件版本信息，存储在 `codex.json` 的 `file_version` 中。
+/// 使用推荐的 X.Y.Z（卷.章.修订）方案追踪作品修订历史。
+/// 所有字段可选，支持渐进式采用。
+///
+/// # Example JSON / JSON 示例
+///
+/// ```json
+/// {
+///   "version": "1.12.0",
+///   "revision": 15,
+///   "released_at": "2025-12-01T00:00:00Z",
+///   "changelog": "修复第三章错别字，新增第十二章"
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileVersion {
+    /// Version string in X.Y.Z format (e.g., "1.12.0").
+    /// X.Y.Z 格式的版本字符串（如 "1.12.0"）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
+    /// Revision counter, auto-incremented with each build.
+    /// 修订计数器，每次构建自动递增。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+
+    /// Publication timestamp in ISO 8601 format.
+    /// ISO 8601 格式的发布时间戳。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released_at: Option<String>,
+
+    /// Changelog / update notes for this version.
+    /// 此版本的更新说明。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+}
+
+// =============================================================================
 // Tests / 测试
 // =============================================================================
 
@@ -378,6 +435,7 @@ mod tests {
             dates: None,
             cover: None,
             rating: None,
+            file_version: None,
         }
     }
 
@@ -493,12 +551,23 @@ mod tests {
                 system: "age".to_string(),
                 value: "16+".to_string(),
             }),
+            file_version: Some(FileVersion {
+                version: Some("1.12.0".to_string()),
+                revision: Some(15),
+                released_at: Some("2025-12-01T00:00:00Z".to_string()),
+                changelog: Some("修复第三章错别字，新增第十二章".to_string()),
+            }),
         };
         let json = serde_json::to_string_pretty(&codex).unwrap();
         let deserialized: Codex = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.title.main, "作品主标题");
         assert_eq!(deserialized.word_count, Some(1_500_000));
         assert_eq!(deserialized.rating.unwrap().value, "16+");
+        // Verify file_version round-trips correctly.
+        // 验证 file_version 正确往返。
+        let fv = deserialized.file_version.unwrap();
+        assert_eq!(fv.version.as_deref(), Some("1.12.0"));
+        assert_eq!(fv.revision, Some(15));
     }
 
     #[test]
@@ -518,5 +587,62 @@ mod tests {
         assert!(!json.contains("\"dates\""));
         assert!(!json.contains("\"cover\""));
         assert!(!json.contains("\"rating\""));
+        assert!(!json.contains("\"file_version\""));
+    }
+
+    #[test]
+    fn test_file_version_serde_round_trip() {
+        // FileVersion should serialize and deserialize correctly.
+        // FileVersion 应正确序列化和反序列化。
+        let fv = FileVersion {
+            version: Some("2.3.1".to_string()),
+            revision: Some(42),
+            released_at: Some("2026-03-25T10:00:00Z".to_string()),
+            changelog: Some("全卷校对修正".to_string()),
+        };
+        let json = serde_json::to_string(&fv).unwrap();
+        let deserialized: FileVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, fv);
+    }
+
+    #[test]
+    fn test_file_version_all_none() {
+        // FileVersion with all None fields should serialize to "{}".
+        // 所有字段为 None 的 FileVersion 应序列化为 "{}"。
+        let fv = FileVersion {
+            version: None,
+            revision: None,
+            released_at: None,
+            changelog: None,
+        };
+        let json = serde_json::to_string(&fv).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_codex_backward_compat_no_file_version() {
+        // JSON without file_version should still deserialize correctly.
+        // This ensures backward compatibility with existing UCX files.
+        // 不包含 file_version 的 JSON 应仍能正确反序列化。
+        // 确保与现有 UCX 文件的向后兼容。
+        let json = r#"{
+            "version": "1.0",
+            "identifier": {
+                "ucx_id": "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+            },
+            "title": {
+                "main": "向后兼容测试"
+            },
+            "creators": [
+                {
+                    "name": "作者",
+                    "role": "author"
+                }
+            ],
+            "language": "zh-CN"
+        }"#;
+        let codex: Codex = serde_json::from_str(json).unwrap();
+        assert_eq!(codex.title.main, "向后兼容测试");
+        assert!(codex.file_version.is_none());
     }
 }

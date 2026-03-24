@@ -168,6 +168,12 @@ pub fn config_to_codex(config: &ProjectConfig) -> Codex {
         // Content rating (optional).
         // 内容分级（可选）。
         rating: config.rating.clone(),
+
+        // File version — not populated from TOML conversion;
+        // managed by ucx-version module and injected separately.
+        // 文件版本 — 不从 TOML 转换填充；
+        // 由 ucx-version 模块管理，单独注入。
+        file_version: None,
     }
 }
 
@@ -235,6 +241,7 @@ mod tests {
             dates: None,
             build: None,
             signing: None,
+            version_config: None,
         }
     }
 

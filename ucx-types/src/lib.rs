@@ -25,8 +25,8 @@ pub mod structure;
 pub mod ucx_id;
 
 // --- Re-exports for convenience / 便捷重导出 ---
-pub use codex::Codex;
+pub use codex::{Codex, FileVersion};
 pub use manifest::{HashAlgorithm, Manifest, ManifestEntry};
-pub use project::ProjectConfig;
+pub use project::{ProjectConfig, VersionSection};
 pub use structure::{Structure, StructureNode};
 pub use ucx_id::UcxId;

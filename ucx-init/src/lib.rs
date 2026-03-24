@@ -680,6 +680,10 @@ fn build_project_config(ucx_id: &UcxId, options: &InitOptions) -> ProjectConfig 
         // No signing config for a new project.
         // 新项目无签名配置。
         signing: None,
+
+        // No version management config for a new project.
+        // 新项目无版本管理配置。
+        version_config: None,
     }
 }
 

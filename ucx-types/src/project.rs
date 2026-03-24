@@ -93,6 +93,13 @@ pub struct ProjectConfig {
     /// 签名配置（可选，不包含在 UCX 输出中）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signing: Option<SigningSection>,
+
+    /// Version management configuration (optional).
+    /// Maps to the `[version]` section in `unicodex.toml`.
+    /// 版本管理配置（可选）。
+    /// 对应 `unicodex.toml` 中的 `[version]` 段。
+    #[serde(rename = "version", skip_serializing_if = "Option::is_none")]
+    pub version_config: Option<VersionSection>,
 }
 
 // =============================================================================
@@ -233,6 +240,39 @@ pub struct SigningSection {
     pub signer_id: Option<String>,
 }
 
+/// The `[version]` section of `unicodex.toml` — version management configuration.
+///
+/// Controls how UCX file versioning behaves during development and build.
+///
+/// `unicodex.toml` 的 `[version]` 段 — 版本管理配置。
+/// 控制开发和构建过程中 UCX 文件版本的行为。
+///
+/// # Example TOML / TOML 示例
+///
+/// ```toml
+/// [version]
+/// strategy = "auto"
+/// auto_on_build = true
+/// semantic = "volume.chapter.patch"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionSection {
+    /// Version strategy: "auto" (recommended) or "manual".
+    /// 版本策略："auto"（推荐）或 "manual"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+
+    /// Whether to automatically run `ucx version auto` during `ucx build`.
+    /// 是否在 `ucx build` 时自动执行 `ucx version auto`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_on_build: Option<bool>,
+
+    /// Version semantic scheme: "volume.chapter.patch" (default) or "semver".
+    /// 版本语义方案："volume.chapter.patch"（默认）或 "semver"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<String>,
+}
+
 // =============================================================================
 // Tests / 测试
 // =============================================================================
@@ -276,6 +316,7 @@ mod tests {
             dates: None,
             build: None,
             signing: None,
+            version_config: None,
         }
     }
 
@@ -327,5 +368,79 @@ language = "zh-CN"
         let deserialized: ProjectConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(deserialized.title.main, original.title.main);
         assert_eq!(deserialized.creators.len(), original.creators.len());
+    }
+
+    #[test]
+    fn test_version_section_toml_round_trip() {
+        // VersionSection should round-trip through TOML correctly.
+        // VersionSection 应通过 TOML 正确往返。
+        let vs = VersionSection {
+            strategy: Some("auto".to_string()),
+            auto_on_build: Some(true),
+            semantic: Some("volume.chapter.patch".to_string()),
+        };
+        let toml_str = toml::to_string_pretty(&vs).unwrap();
+        let deserialized: VersionSection = toml::from_str(&toml_str).unwrap();
+        assert_eq!(deserialized.strategy.as_deref(), Some("auto"));
+        assert_eq!(deserialized.auto_on_build, Some(true));
+        assert_eq!(deserialized.semantic.as_deref(), Some("volume.chapter.patch"));
+    }
+
+    #[test]
+    fn test_project_config_with_version_section() {
+        // ProjectConfig with [version] section should parse correctly.
+        // 包含 [version] 段的 ProjectConfig 应正确解析。
+        let toml_str = r#"
+[project]
+version = "1.0"
+
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+
+[title]
+main = "版本测试"
+
+[[creators]]
+name = "作者"
+role = "author"
+
+[book]
+language = "zh-CN"
+
+[version]
+strategy = "auto"
+auto_on_build = true
+semantic = "volume.chapter.patch"
+"#;
+        let config: ProjectConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.title.main, "版本测试");
+        let vc = config.version_config.unwrap();
+        assert_eq!(vc.strategy.as_deref(), Some("auto"));
+        assert_eq!(vc.auto_on_build, Some(true));
+    }
+
+    #[test]
+    fn test_project_config_backward_compat_no_version() {
+        // ProjectConfig without [version] section should still parse.
+        // 不包含 [version] 段的 ProjectConfig 应仍能解析。
+        let toml_str = r#"
+[project]
+version = "1.0"
+
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+
+[title]
+main = "兼容测试"
+
+[[creators]]
+name = "作者"
+role = "author"
+
+[book]
+language = "zh-CN"
+"#;
+        let config: ProjectConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.version_config.is_none());
     }
 }
