@@ -211,6 +211,18 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     info!("Converted config to codex / 已转换配置为 codex");
 
     // -------------------------------------------------------------------------
+    // Step 2.5: Resolve file version (from .ucx-version.json or auto).
+    // 步骤 2.5：解析文件版本（来自 .ucx-version.json 或自动检测）。
+    // -------------------------------------------------------------------------
+    let file_version = resolve_file_version(project_path, &config);
+    let codex = if file_version.is_some() {
+        info!("Injecting file_version into codex / 正在注入 file_version 到 codex");
+        convert::config_to_codex_with_version(&config, file_version)
+    } else {
+        codex
+    };
+
+    // -------------------------------------------------------------------------
     // Step 3: Read content/struct.json (required).
     // 步骤 3：读取 content/struct.json（必需）。
     // -------------------------------------------------------------------------
@@ -294,6 +306,12 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
         path = %output_path.display(),
         "UCX file built successfully / UCX 文件构建成功"
     );
+
+    // -------------------------------------------------------------------------
+    // Step 7: Update .ucx-snapshot.json for future version detection.
+    // 步骤 7：更新 .ucx-snapshot.json 以供未来版本检测使用。
+    // -------------------------------------------------------------------------
+    update_snapshot_after_build(project_path);
 
     Ok(output_path)
 }
@@ -822,6 +840,140 @@ fn is_valid_bcp47(tag: &str) -> bool {
     }
 
     true
+}
+
+// =============================================================================
+// Internal: version resolution / 内部：版本解析
+// =============================================================================
+
+/// The `.ucx-version.json` file name for version state persistence.
+/// 版本状态持久化的 `.ucx-version.json` 文件名。
+const VERSION_STATE_FILE: &str = ".ucx-version.json";
+
+/// Resolve the file version to inject into codex.json during build.
+///
+/// Strategy:
+/// 1. If `.ucx-version.json` exists, load it.
+/// 2. If `[version] auto_on_build = true`, run auto detection and bump.
+/// 3. Otherwise, return None.
+///
+/// 解析构建时注入到 codex.json 中的文件版本。
+/// 策略：
+/// 1. 若 `.ucx-version.json` 存在，加载它。
+/// 2. 若 `[version] auto_on_build = true`，运行自动检测和升级。
+/// 3. 否则返回 None。
+fn resolve_file_version(
+    project_path: &Path,
+    config: &ucx_types::ProjectConfig,
+) -> Option<ucx_types::FileVersion> {
+    // Check if auto_on_build is enabled.
+    // 检查是否启用了 auto_on_build。
+    let auto_on_build = config
+        .version_config
+        .as_ref()
+        .and_then(|vc| vc.auto_on_build)
+        .unwrap_or(false);
+
+    if auto_on_build {
+        // Run auto version detection and bump.
+        // 运行自动版本检测和升级。
+        match ucx_version::detect_changes(project_path) {
+            Ok((current, changes)) => {
+                if changes.is_empty() {
+                    info!("No content changes detected, skipping version bump / 未检测到内容变更，跳过版本升级");
+                    // Still load existing version state if available.
+                    // 如果可用，仍加载现有版本状态。
+                    return load_version_state_file(project_path);
+                }
+
+                match ucx_version::auto_version(&current, &changes, project_path) {
+                    Ok(next) => {
+                        info!("Auto version: {current} → {next}");
+                        let prev = load_version_state_file(project_path);
+                        let prev_revision = prev
+                            .as_ref()
+                            .and_then(|fv| fv.revision)
+                            .unwrap_or(0);
+                        let fv = ucx_types::FileVersion {
+                            version: Some(next.to_string()),
+                            revision: Some(prev_revision + 1),
+                            released_at: Some(chrono::Utc::now().to_rfc3339()),
+                            changelog: None,
+                        };
+                        // Save the updated version state.
+                        // 保存更新后的版本状态。
+                        if let Err(e) = save_version_state_file(project_path, &fv) {
+                            tracing::warn!("Failed to save version state: {e}");
+                        }
+                        return Some(fv);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Auto version failed: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Change detection failed: {e}");
+            }
+        }
+    }
+
+    // Fallback: load from .ucx-version.json if it exists.
+    // 回退：如果 .ucx-version.json 存在则加载。
+    load_version_state_file(project_path)
+}
+
+/// Load `FileVersion` from `.ucx-version.json`.
+///
+/// 从 `.ucx-version.json` 加载 `FileVersion`。
+fn load_version_state_file(project_path: &Path) -> Option<ucx_types::FileVersion> {
+    let path = project_path.join(VERSION_STATE_FILE);
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Save `FileVersion` to `.ucx-version.json`.
+///
+/// 将 `FileVersion` 保存到 `.ucx-version.json`。
+fn save_version_state_file(
+    project_path: &Path,
+    fv: &ucx_types::FileVersion,
+) -> Result<(), std::io::Error> {
+    let path = project_path.join(VERSION_STATE_FILE);
+    let json = serde_json::to_string_pretty(fv)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(&path, json)
+}
+
+/// Update `.ucx-snapshot.json` after a successful build.
+///
+/// This captures the current state of content files for future
+/// snapshot-based change detection.
+///
+/// 构建成功后更新 `.ucx-snapshot.json`。
+/// 捕获当前内容文件状态以供未来基于快照的变更检测。
+fn update_snapshot_after_build(project_path: &Path) {
+    // Read the current version from .ucx-version.json for the snapshot.
+    // 从 .ucx-version.json 读取当前版本用于快照。
+    let version = load_version_state_file(project_path)
+        .and_then(|fv| fv.version)
+        .unwrap_or_else(|| "0.0.0".to_string());
+
+    match ucx_version::snapshot::Snapshot::compute_current(project_path, &version) {
+        Ok(snapshot) => {
+            if let Err(e) = snapshot.save(project_path) {
+                tracing::warn!("Failed to save snapshot: {e}");
+            } else {
+                info!("Updated .ucx-snapshot.json / 已更新 .ucx-snapshot.json");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to compute snapshot: {e}");
+        }
+    }
 }
 
 // =============================================================================

@@ -22,6 +22,7 @@ authors.workspace = true
 [dependencies]
 # --- Internal crates / 内部 crate ---
 ucx-types = { workspace = true }
+ucx-version = { path = "../ucx-version" }
 
 # --- Archive / 归档 ---
 zip = { workspace = true }
