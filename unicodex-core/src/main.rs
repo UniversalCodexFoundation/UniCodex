@@ -180,8 +180,10 @@ enum Commands {
         action: Option<VersionAction>,
 
         /// Project directory path (default: current directory).
+        /// Can appear before or after the subcommand.
         /// 项目目录路径（默认：当前目录）。
-        #[arg(long, default_value = ".")]
+        /// 可出现在子命令之前或之后。
+        #[arg(long, default_value = ".", global = true)]
         path: PathBuf,
     },
 
@@ -446,6 +448,13 @@ fn main() -> anyhow::Result<()> {
 
             // Version / 版本
             println!("Version: {}", codex.version);
+
+            // File Version (from ucx-version module) / 文件版本（来自 ucx-version 模块）
+            if let Some(ref fv) = codex.file_version {
+                let ver = fv.version.as_deref().unwrap_or("(unset)");
+                let rev = fv.revision.map_or("—".to_string(), |r| r.to_string());
+                println!("File Version: {ver} (revision {rev})");
+            }
 
             // Created-By / 创建工具
             let manifest = archive.manifest();
@@ -860,13 +869,16 @@ fn handle_version_command(
                 .unwrap_or_else(ucx_version::UcxVersion::zero);
 
             let struct_path = project_path.join("content").join("struct.json");
-            let chapter_num = if struct_path.exists() {
+            let struct_chapter = if struct_path.exists() {
                 let content = std::fs::read_to_string(&struct_path)?;
                 let structure: ucx_types::Structure = serde_json::from_str(&content)?;
                 ucx_version::bump::find_latest_chapter_number(&structure)
             } else {
                 current.chapter + 1
             };
+            // Prevent version downgrade: new chapter must be > current chapter.
+            // 防止版本降级：新章节编号必须大于当前章节编号。
+            let chapter_num = struct_chapter.max(current.chapter + 1);
 
             let next = ucx_version::bump::bump_chapter(&current, chapter_num);
             println!("Version bump: {current} → {next}");
