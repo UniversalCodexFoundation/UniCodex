@@ -66,6 +66,11 @@ pub enum ParseError {
     /// 内容编码错误（如无效的 UTF-8）。
     #[error("content encoding error: {0}")]
     Encoding(String),
+
+    /// Path traversal attack detected (e.g., entry contains `..` or starts with `/`).
+    /// 检测到路径遍历攻击（如条目包含 `..` 或以 `/` 开头）。
+    #[error("path traversal detected: {0}")]
+    PathTraversal(String),
 }
 
 // =============================================================================
@@ -356,6 +361,90 @@ impl UcxArchive {
             .file_names()
             .map(|name| name.to_string())
             .collect()
+    }
+
+    /// Extract all files from the UCX archive to the given output directory.
+    ///
+    /// Recreates the archive's internal directory structure under `output_dir`.
+    /// Files extracted: mimetype, META-INF/MANIFEST.MF, metadata/codex.json,
+    /// content/struct.json, and all content/chapter files.
+    ///
+    /// Returns the list of extracted file paths (relative to `output_dir`).
+    ///
+    /// 将 UCX 归档中的所有文件解压到指定的输出目录。
+    /// 在 `output_dir` 下重建归档的内部目录结构。
+    /// 提取的文件：mimetype、META-INF/MANIFEST.MF、metadata/codex.json、
+    /// content/struct.json 以及所有 content/chapter 文件。
+    ///
+    /// 返回已提取文件路径的列表（相对于 `output_dir`）。
+    ///
+    /// # Arguments / 参数
+    ///
+    /// * `output_dir` — Target directory to extract into. / 提取目标目录。
+    ///
+    /// # Errors / 错误
+    ///
+    /// - `PathTraversal` if any entry contains `..` or starts with `/` (security).
+    /// - `Io` for filesystem errors (creating directories, writing files).
+    /// - `Zip` for archive reading errors.
+    pub fn extract_to(&mut self, output_dir: &Path) -> Result<Vec<String>, ParseError> {
+        info!("Extracting UCX archive to: {}", output_dir.display());
+
+        // Ensure the output directory exists.
+        // 确保输出目录存在。
+        std::fs::create_dir_all(output_dir)?;
+
+        let mut extracted_files = Vec::new();
+
+        // Iterate over all entries in the archive by index.
+        // 按索引遍历归档中的所有条目。
+        for i in 0..self.archive.len() {
+            let mut entry = self.archive.by_index(i)?;
+            let entry_name = entry.name().to_string();
+
+            // Skip directory entries (names ending with '/').
+            // 跳过目录条目（名称以 '/' 结尾）。
+            if entry_name.ends_with('/') {
+                debug!("Skipping directory entry: {}", entry_name);
+                continue;
+            }
+
+            // Security: reject entries containing ".." or starting with "/" to
+            // prevent path traversal attacks.
+            // 安全：拒绝包含 ".." 或以 "/" 开头的条目，防止路径遍历攻击。
+            if entry_name.contains("..") || entry_name.starts_with('/') {
+                return Err(ParseError::PathTraversal(format!(
+                    "unsafe entry name rejected: '{entry_name}'"
+                )));
+            }
+
+            // Build the output file path.
+            // 构建输出文件路径。
+            let out_path = output_dir.join(&entry_name);
+
+            // Create parent directories if needed.
+            // 如有需要，创建父目录。
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            // Read entry content and write to disk.
+            // 读取条目内容并写入磁盘。
+            let mut buf = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buf)?;
+            std::fs::write(&out_path, &buf)?;
+
+            debug!("Extracted: {}", entry_name);
+            extracted_files.push(entry_name);
+        }
+
+        info!(
+            "Extraction complete: {} files extracted to {}",
+            extracted_files.len(),
+            output_dir.display()
+        );
+
+        Ok(extracted_files)
     }
 }
 

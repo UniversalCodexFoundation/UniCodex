@@ -373,3 +373,76 @@ fn test_list_files() {
     // 总数应为 5。
     assert_eq!(files.len(), 5, "should have exactly 5 files");
 }
+
+/// Test: extract_to should extract all files to the output directory with correct
+/// directory structure and file contents.
+///
+/// 测试：extract_to 应将所有文件解压到输出目录，保持正确的目录结构和文件内容。
+#[test]
+fn test_extract_to() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ucx_path = tmp.path().join("extract.ucx");
+    create_test_ucx(&ucx_path);
+
+    let mut archive = open(&ucx_path).expect("open() should succeed");
+
+    // Create a subdirectory for extraction output.
+    // 为解压输出创建子目录。
+    let output_dir = tmp.path().join("output");
+
+    // Extract all files.
+    // 解压所有文件。
+    let extracted = archive
+        .extract_to(&output_dir)
+        .expect("extract_to should succeed");
+
+    // Should have extracted 5 files (no directory entries).
+    // 应已解压 5 个文件（无目录条目）。
+    assert_eq!(extracted.len(), 5, "should extract exactly 5 files");
+
+    // Verify all expected files exist on disk.
+    // 验证所有预期文件在磁盘上存在。
+    let expected_files = vec![
+        "mimetype",
+        "META-INF/MANIFEST.MF",
+        "metadata/codex.json",
+        "content/struct.json",
+        "content/chapter-001.md",
+    ];
+    for expected in &expected_files {
+        let file_path = output_dir.join(expected);
+        assert!(
+            file_path.exists(),
+            "expected file should exist: {expected}"
+        );
+    }
+
+    // Verify the returned list contains all expected entries.
+    // 验证返回的列表包含所有预期条目。
+    for expected in &expected_files {
+        assert!(
+            extracted.contains(&expected.to_string()),
+            "extracted list should contain: {expected}"
+        );
+    }
+
+    // Verify content of mimetype matches the expected value.
+    // 验证 mimetype 的内容与预期值匹配。
+    let mimetype_content = std::fs::read_to_string(output_dir.join("mimetype"))
+        .expect("should read mimetype");
+    assert_eq!(mimetype_content, "application/vnd.unicodex+zip");
+
+    // Verify content of chapter file matches the original.
+    // 验证章节文件的内容与原始内容匹配。
+    let chapter_content = std::fs::read_to_string(output_dir.join("content/chapter-001.md"))
+        .expect("should read chapter");
+    assert_eq!(chapter_content, test_chapter_content());
+
+    // Verify codex.json content can be parsed correctly.
+    // 验证 codex.json 内容可以正确解析。
+    let codex_content = std::fs::read_to_string(output_dir.join("metadata/codex.json"))
+        .expect("should read codex.json");
+    let codex: ucx_types::Codex = serde_json::from_str(&codex_content)
+        .expect("extracted codex.json should be valid JSON");
+    assert_eq!(codex.title.main, "测试小说");
+}

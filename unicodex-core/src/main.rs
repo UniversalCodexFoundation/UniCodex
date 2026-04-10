@@ -154,10 +154,19 @@ enum Commands {
     /// Unpack a UCX file to a directory.
     /// 将 UCX 文件解包到目录。
     Unpack {
-        /// Arguments placeholder (command not yet implemented).
-        /// 参数占位（命令尚未实现）。
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
+        /// Path to the .ucx file to unpack.
+        /// 要解包的 .ucx 文件路径。
+        file: PathBuf,
+
+        /// Output directory (default: file stem, e.g., "novel.ucx" -> "novel/").
+        /// 输出目录（默认：文件名去掉扩展名，如 "novel.ucx" -> "novel/"）。
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Force overwrite if output directory already exists.
+        /// 如果输出目录已存在则强制覆盖。
+        #[arg(short = 'f', long, default_value_t = false)]
+        force: bool,
     },
 
     /// Sign a UCX file.
@@ -626,8 +635,63 @@ fn main() -> anyhow::Result<()> {
         // =====================================================================
         // Unimplemented subcommands (Phase 2+) / 未实现的子命令（第二阶段+）
         // =====================================================================
-        Commands::Unpack { .. } => {
-            println!("ucx unpack: not yet implemented (planned for Phase 2)");
+        // =====================================================================
+        // ucx unpack — Extract a UCX file to a directory.
+        // ucx unpack — 将 UCX 文件解包到目录。
+        // =====================================================================
+        Commands::Unpack { file, output, force } => {
+            // Determine the output directory.
+            // If --output is provided, use it; otherwise, derive from the file stem.
+            // 确定输出目录。
+            // 如果提供了 --output，使用它；否则从文件名推导。
+            let output_dir = match output {
+                Some(dir) => dir,
+                None => {
+                    // Use the file stem as the output directory name.
+                    // e.g., "novel.ucx" -> "novel/"
+                    // 使用文件名（不含扩展名）作为输出目录名。
+                    // 如 "novel.ucx" -> "novel/"
+                    file
+                        .file_stem()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from("ucx_output"))
+                }
+            };
+
+            // If output directory already exists and --force is not set,
+            // prompt the user for confirmation.
+            // 如果输出目录已存在且未指定 --force，提示用户确认。
+            if output_dir.exists() && !force {
+                eprintln!(
+                    "Warning: output directory already exists: {}",
+                    output_dir.display()
+                );
+                eprint!("Overwrite? [y/N] ");
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_ok() {
+                    let answer = input.trim().to_lowercase();
+                    if answer != "y" && answer != "yes" {
+                        println!("Aborted.");
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Open and parse the UCX file.
+            // 打开并解析 UCX 文件。
+            let mut archive = ucx_parse::open(&file)?;
+
+            // Extract all files to the output directory.
+            // 将所有文件解压到输出目录。
+            let extracted = archive.extract_to(&output_dir)?;
+
+            // Print summary.
+            // 打印摘要。
+            println!(
+                "Unpacked {} files to {}",
+                extracted.len(),
+                output_dir.display()
+            );
         }
         Commands::Sign { .. } => {
             println!("ucx sign: not yet implemented (planned for Phase 3)");
