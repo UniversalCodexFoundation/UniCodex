@@ -296,10 +296,16 @@ pub fn create_ucx_archive(
 ) -> Result<(), BuildError> {
     // --- Serialize metadata to bytes. ---
     // --- 将元数据序列化为字节。 ---
+    // NOTE: `serde_json::to_string_pretty` does NOT append a trailing newline.
+    // Well-formed text files should end with a newline character, so we append "\n" explicitly.
+    // 注意：`serde_json::to_string_pretty` 不会追加尾部换行符。
+    // 规范的文本文件应以换行符结尾，因此我们显式追加 "\n"。
     let codex_json = serde_json::to_string_pretty(codex)
-        .map_err(|e| BuildError::Serialization(e.to_string()))?;
+        .map_err(|e| BuildError::Serialization(e.to_string()))?
+        + "\n";
     let struct_json = serde_json::to_string_pretty(structure)
-        .map_err(|e| BuildError::Serialization(e.to_string()))?;
+        .map_err(|e| BuildError::Serialization(e.to_string()))?
+        + "\n";
 
     // --- Read all collected file contents into memory for manifest computation. ---
     // --- 将所有收集到的文件内容读入内存以计算清单。 ---
