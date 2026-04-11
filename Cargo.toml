@@ -74,7 +74,10 @@ ucx-crypto  = { path = "ucx-crypto" }
 blake3 = "1.8"                                       # High-performance hash function / 高性能哈希函数
 
 # --- Cryptography / 密码学 ---
-ed25519-dalek = "2.2"                                # Ed25519 signatures / Ed25519 签名
+ed25519-dalek = { version = "2.2", features = ["rand_core", "pkcs8", "pem"] }  # Ed25519 signatures with PKCS#8 + PEM support / Ed25519 签名（含 PKCS#8 + PEM 支持）
+rand = "0.8"                                         # Random number generation / 随机数生成
+pkcs8 = { version = "0.10", features = ["pem", "std"] }  # PKCS#8 private key encoding / PKCS#8 私钥编码
+pem-rfc7468 = "0.7"                                  # PEM encoding (RFC 7468) / PEM 编码（RFC 7468）
 
 # --- Archive / 归档 ---
 zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作

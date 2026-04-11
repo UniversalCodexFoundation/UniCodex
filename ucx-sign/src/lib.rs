@@ -2,7 +2,7 @@
 //!
 //! This module generates digital signatures for UCX files using
 //! the dual-layer system:
-//! - Layer 1: JAR-style (MANIFEST.MF → SF → RSA/EC)
+//! - Layer 1: JAR-style (MANIFEST.MF -> SF -> RSA/EC)
 //! - Layer 2: APK v2-style global signing block
 //!
 //! It also manages certificates, multi-signer workflows,
@@ -10,11 +10,25 @@
 //!
 //! UCX 数字签名与证书管理模块。
 //! 使用双层体系为 UCX 文件生成数字签名：
-//! - Layer 1: JAR 式（MANIFEST.MF → SF → RSA/EC）
+//! - Layer 1: JAR 式（MANIFEST.MF -> SF -> RSA/EC）
 //! - Layer 2: APK v2 式全局签名块
+//!
 //! 同时管理证书、多签名者工作流和密钥生成。
 
 use thiserror::Error;
+
+// =============================================================================
+// Sub-modules / 子模块
+// =============================================================================
+
+/// Ed25519 key generation and PEM I/O.
+/// Ed25519 密钥生成与 PEM 读写。
+pub mod keys;
+
+// pub mod cert;    // Step 2: Self-signed certificate generation / 自签名证书生成
+
+// pub mod layer1;  // Step 3: JAR-style signing / JAR 式签名
+// pub mod layer2;  // Step 4: APK v2-style signing / APK v2 式签名
 
 // =============================================================================
 // Error types / 错误类型
@@ -44,6 +58,21 @@ pub enum SignError {
     /// 签名过程中的 I/O 错误。
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Certificate-related error.
+    /// 证书相关错误。
+    #[error("certificate error: {0}")]
+    CertificateError(String),
+
+    /// Key generation error.
+    /// 密钥生成错误。
+    #[error("key generation error: {0}")]
+    KeyGenError(String),
+
+    /// PEM encoding/decoding error.
+    /// PEM 编解码错误。
+    #[error("PEM encoding error: {0}")]
+    PemError(String),
 }
 
 // =============================================================================
@@ -59,12 +88,12 @@ pub enum SignError {
 ///
 /// # Arguments / 参数
 ///
-/// * `ucx_path`    - Path to the `.ucx` file to sign.
-///                   要签名的 `.ucx` 文件路径。
-/// * `key_path`    - Path to the private key file.
-///                   私钥文件路径。
-/// * `signer_id`   - Identifier for the signer (e.g., "AUTHOR").
-///                   签名者标识（如 "AUTHOR"）。
+/// * `ucx_path`  - Path to the `.ucx` file to sign.
+///   要签名的 `.ucx` 文件路径。
+/// * `key_path`  - Path to the private key file.
+///   私钥文件路径。
+/// * `signer_id` - Identifier for the signer (e.g., "AUTHOR").
+///   签名者标识（如 "AUTHOR"）。
 ///
 /// # Returns / 返回
 ///
@@ -85,8 +114,8 @@ pub fn sign(
     //    解析 MANIFEST.MF。
     // 3. Generate SF file (digest of each MANIFEST.MF section).
     //    生成 SF 文件（MANIFEST.MF 各段落的摘要）。
-    // 4. Sign SF file with private key → create RSA/EC block.
-    //    用私钥签署 SF 文件 → 创建 RSA/EC 块。
+    // 4. Sign SF file with private key -> create RSA/EC block.
+    //    用私钥签署 SF 文件 -> 创建 RSA/EC 块。
     // 5. Insert Layer 1 files into META-INF/signatures/{signer_id}/.
     //    将 Layer 1 文件插入 META-INF/signatures/{signer_id}/。
     // 6. Generate Layer 2 signing block.
