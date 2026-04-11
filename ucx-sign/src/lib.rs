@@ -25,7 +25,9 @@ use thiserror::Error;
 /// Ed25519 密钥生成与 PEM 读写。
 pub mod keys;
 
-// pub mod cert;    // Step 2: Self-signed certificate generation / 自签名证书生成
+/// Self-signed X.509 certificate generation.
+/// 自签名 X.509 证书生成。
+pub mod cert;
 
 // pub mod layer1;  // Step 3: JAR-style signing / JAR 式签名
 // pub mod layer2;  // Step 4: APK v2-style signing / APK v2 式签名

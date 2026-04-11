@@ -78,6 +78,13 @@ ed25519-dalek = { version = "2.2", features = ["rand_core", "pkcs8", "pem"] }  #
 rand = "0.8"                                         # Random number generation / 随机数生成
 pkcs8 = { version = "0.10", features = ["pem", "std"] }  # PKCS#8 private key encoding / PKCS#8 私钥编码
 pem-rfc7468 = "0.7"                                  # PEM encoding (RFC 7468) / PEM 编码（RFC 7468）
+sha2 = "0.10"                                        # SHA-2 hash functions / SHA-2 哈希函数
+rcgen = "0.13"                                       # X.509 certificate generation / X.509 证书生成
+x509-cert = "0.2"                                    # X.509 certificate parsing / X.509 证书解析
+der = { version = "0.7", features = ["pem", "std"] } # DER/PEM encoding/decoding / DER/PEM 编解码
+spki = { version = "0.7", features = ["pem", "std"] }  # Subject Public Key Info / 主体公钥信息
+time = "0.3"                                          # Date/time for certificate validity / 证书有效期日期时间
+rustls-pki-types = "1"                                # PKI types for rcgen interop / rcgen 互操作 PKI 类型
 
 # --- Archive / 归档 ---
 zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作

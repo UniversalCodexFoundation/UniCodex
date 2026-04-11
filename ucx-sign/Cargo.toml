@@ -31,6 +31,15 @@ rand = { workspace = true }
 pkcs8 = { workspace = true }
 pem-rfc7468 = { workspace = true }
 
+# --- Certificate / 证书 ---
+rcgen = { workspace = true }
+x509-cert = { workspace = true }
+sha2 = { workspace = true }
+der = { workspace = true }
+spki = { workspace = true }
+time = { workspace = true }
+rustls-pki-types = { workspace = true }
+
 # --- Encoding / 编码 ---
 base64 = { workspace = true }
 
