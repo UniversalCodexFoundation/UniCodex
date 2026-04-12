@@ -140,6 +140,11 @@ enum Commands {
         /// 详细模式：显示所有文件的哈希详情，即使验证通过。
         #[arg(short, long, default_value_t = false)]
         verbose: bool,
+
+        /// Show detailed signer information.
+        /// 显示详细的签名者信息。
+        #[arg(long, default_value_t = false)]
+        show_signers: bool,
     },
 
     /// Check (validate) a UCX project without building.
@@ -169,13 +174,45 @@ enum Commands {
         force: bool,
     },
 
-    /// Sign a UCX file.
-    /// 对 UCX 文件签名。
+    /// Generate an Ed25519 key pair.
+    /// 生成 Ed25519 密钥对。
+    Keygen {
+        /// Output path for the private key file (public key saved as {output}.pub).
+        /// 私钥文件输出路径（公钥保存为 {output}.pub）。
+        #[arg(short, long, default_value = "author.key")]
+        output: PathBuf,
+    },
+
+    /// Certificate management.
+    /// 证书管理。
+    Cert {
+        /// Certificate subcommand.
+        /// 证书子命令。
+        #[command(subcommand)]
+        action: CertAction,
+    },
+
+    /// Sign a UCX file with Layer 1 + Layer 2 signatures.
+    /// 对 UCX 文件进行双层签名。
     Sign {
-        /// Arguments placeholder (command not yet implemented).
-        /// 参数占位（命令尚未实现）。
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
+        /// Path to the .ucx file to sign.
+        /// 要签名的 .ucx 文件路径。
+        file: PathBuf,
+
+        /// Path to the private key file.
+        /// 私钥文件路径。
+        #[arg(short, long)]
+        key: PathBuf,
+
+        /// Path to the certificate PEM file.
+        /// 证书 PEM 文件路径。
+        #[arg(short, long)]
+        cert: PathBuf,
+
+        /// Signer identifier (e.g., "AUTHOR"). Must be A-Z, 0-9, _ only.
+        /// 签名者标识（如 "AUTHOR"）。仅允许 A-Z、0-9、_。
+        #[arg(long, default_value = "AUTHOR")]
+        signer_id: String,
     },
 
     /// Manage version numbers.
@@ -212,6 +249,44 @@ enum Commands {
         /// 参数占位（命令尚未实现）。
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         _args: Vec<String>,
+    },
+}
+
+/// Subcommands for `ucx cert`.
+///
+/// `ucx cert` 的子命令。
+#[derive(Subcommand)]
+enum CertAction {
+    /// Create a self-signed certificate.
+    /// 创建自签名证书。
+    Create {
+        /// Path to the private key file.
+        /// 私钥文件路径。
+        #[arg(short, long)]
+        key: PathBuf,
+
+        /// Common Name (CN) for the certificate subject.
+        /// 证书主体的通用名称（CN）。
+        #[arg(long)]
+        cn: String,
+
+        /// Validity period in days (default: 365).
+        /// 有效期天数（默认：365）。
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+
+        /// Output path for the certificate PEM file.
+        /// 证书 PEM 文件输出路径。
+        #[arg(short, long, default_value = "author.cert.pem")]
+        output: PathBuf,
+    },
+
+    /// Display certificate information.
+    /// 显示证书信息。
+    Info {
+        /// Path to the certificate PEM file.
+        /// 证书 PEM 文件路径。
+        file: PathBuf,
     },
 }
 
@@ -550,7 +625,7 @@ fn main() -> anyhow::Result<()> {
         // ucx verify — Verify UCX file integrity.
         // ucx verify — 验证 UCX 文件完整性。
         // =====================================================================
-        Commands::Verify { file, verbose } => {
+        Commands::Verify { file, verbose, show_signers } => {
             let start = std::time::Instant::now();
 
             let mut archive = ucx_parse::open(&file)?;
@@ -587,12 +662,47 @@ fn main() -> anyhow::Result<()> {
                 println!("Verified in {:.2}s", elapsed.as_secs_f64());
             }
 
-            // Check for digital signatures.
-            // 检查数字签名。
-            let has_signatures = archive.list_files().iter().any(|f| f.starts_with("META-INF/signatures/"));
-            if !has_signatures {
-                println!();
-                println!("Note: no digital signatures found — integrity verified against MANIFEST.MF hashes only");
+            // Signature verification using ucx-verify.
+            // 使用 ucx-verify 进行签名验证。
+            match ucx_verify::verify(&file) {
+                Ok(report) => {
+                    println!();
+                    println!("=== Signature Verification ===");
+                    let status_str = match report.status {
+                        ucx_verify::VerifyStatus::Valid => "VERIFIED",
+                        ucx_verify::VerifyStatus::ValidWithWarnings => "PARTIAL",
+                        ucx_verify::VerifyStatus::Invalid => "INVALID",
+                        ucx_verify::VerifyStatus::Unsigned => "UNSIGNED",
+                    };
+                    println!("Status: {status_str}");
+
+                    if let Some(ref l2) = report.layer2 {
+                        let icon = if l2.valid { "OK" } else { "FAIL" };
+                        println!("  [{icon}] Layer 2 (archive integrity): {}", l2.details);
+                    }
+                    if let Some(ref l1) = report.layer1 {
+                        let icon = if l1.valid { "OK" } else { "FAIL" };
+                        println!("  [{icon}] Layer 1 (file signatures): {} signer(s) - {}", l1.signer_count, l1.details);
+                    }
+
+                    if show_signers && !report.signers.is_empty() {
+                        println!();
+                        println!("Signers:");
+                        for (i, signer) in report.signers.iter().enumerate() {
+                            println!("  [{}] {}", i + 1, signer.signer_id);
+                            println!("      Subject: CN={}", signer.subject_cn);
+                            println!("      Type: {}", signer.cert_type);
+                            println!("      Fingerprint: {}", signer.fingerprint_blake3);
+                            let l1_icon = if signer.layer1_valid { "OK" } else { "FAIL" };
+                            let l2_icon = if signer.layer2_valid { "OK" } else { "FAIL" };
+                            println!("      Layer 1: [{l1_icon}]  Layer 2: [{l2_icon}]");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!();
+                    println!("Signature verification skipped: {e}");
+                }
             }
 
             if invalid > 0 {
@@ -693,9 +803,67 @@ fn main() -> anyhow::Result<()> {
                 output_dir.display()
             );
         }
-        Commands::Sign { .. } => {
-            println!("ucx sign: not yet implemented (planned for Phase 3)");
+        // =====================================================================
+        // ucx keygen — Generate an Ed25519 key pair.
+        // ucx keygen — 生成 Ed25519 密钥对。
+        // =====================================================================
+        Commands::Keygen { output } => {
+            ucx_sign::keygen(&output)?;
+            println!("Key pair generated:");
+            println!("  Private key: {}", output.display());
+            let mut pub_path = output.as_os_str().to_owned();
+            pub_path.push(".pub");
+            println!("  Public key:  {}", std::path::PathBuf::from(pub_path).display());
         }
+
+        // =====================================================================
+        // ucx cert — Certificate management.
+        // ucx cert — 证书管理。
+        // =====================================================================
+        Commands::Cert { action } => match action {
+            // -----------------------------------------------------------------
+            // ucx cert create — Create a self-signed certificate.
+            // ucx cert create — 创建自签名证书。
+            // -----------------------------------------------------------------
+            CertAction::Create { key, cn, days, output } => {
+                ucx_sign::create_cert(&key, &cn, days, &output)?;
+                println!("Certificate created: {}", output.display());
+                println!("  Subject: CN={cn}");
+                println!("  Validity: {days} days");
+            }
+
+            // -----------------------------------------------------------------
+            // ucx cert info — Display certificate information.
+            // ucx cert info — 显示证书信息。
+            // -----------------------------------------------------------------
+            CertAction::Info { file } => {
+                let cert_der = ucx_sign::cert::load_certificate(&file)?;
+                let cn = ucx_sign::cert::cert_subject_cn(&cert_der)
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                let fingerprint_blake3 = ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
+                let fingerprint_sha256 = ucx_sign::cert::cert_fingerprint_sha256(&cert_der);
+
+                println!("=== Certificate Info ===");
+                println!("File: {}", file.display());
+                println!("Subject: CN={cn}");
+                println!("Issuer: CN={cn}");
+                println!("Type: self-signed");
+                println!("Fingerprint (BLAKE3): {fingerprint_blake3}");
+                println!("Fingerprint (SHA-256): {fingerprint_sha256}");
+            }
+        },
+
+        // =====================================================================
+        // ucx sign — Sign a UCX file with dual-layer signatures.
+        // ucx sign — 对 UCX 文件进行双层签名。
+        // =====================================================================
+        Commands::Sign { file, key, cert, signer_id } => {
+            ucx_sign::sign(&file, &key, &cert, &signer_id)?;
+            println!("UCX file signed: {}", file.display());
+            println!("  Signer ID: {signer_id}");
+            println!("  Layer 1 (JAR-style) + Layer 2 (APK v2-style) signatures applied.");
+        }
+
         Commands::Version { action, path } => {
             handle_version_command(action, &path)?;
         }
