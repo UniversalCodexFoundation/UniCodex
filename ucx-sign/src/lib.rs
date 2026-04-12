@@ -32,7 +32,14 @@ pub mod cert;
 /// Layer 1: JAR-style SF generation and Ed25519 signing.
 /// Layer 1: JAR 式 SF 生成与 Ed25519 签名。
 pub mod layer1;
-// pub mod layer2;  // Step 4: APK v2-style signing / APK v2 式签名
+
+/// Layer 2: APK v2-style signing block (chunked digest + Ed25519).
+/// Layer 2：APK v2 式签名块（分块摘要 + Ed25519）。
+pub mod layer2;
+
+/// Low-level ZIP binary operations for signing block insertion/extraction.
+/// 签名块插入/提取的底层 ZIP 二进制操作。
+pub mod zip_binary;
 
 // =============================================================================
 // Error types / 错误类型

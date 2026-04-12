@@ -56,3 +56,4 @@ tracing = { workspace = true }
 [dev-dependencies]
 # --- Testing / 测试 ---
 tempfile = { workspace = true }
+zip = { workspace = true }

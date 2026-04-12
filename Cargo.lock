@@ -1754,6 +1754,7 @@ dependencies = [
  "time",
  "tracing",
  "x509-cert",
+ "zip",
 ]
 
 [[package]]
