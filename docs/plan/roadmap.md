@@ -42,7 +42,7 @@
 │      ├── ucx init / build / info / verify 命令                 │
 │      └── 默认 WARN 日志级别 + 未实现命令友好提示               │
 │                                                                 │
-│  Phase 2 ─ 完善与版本管理（Polish & Versioning）    📋 规划中   │
+│  Phase 2 ─ 完善与版本管理（Polish & Versioning）    ✅ 已完成    │
 │  ├── ucx-version：版本管理模块                                 │
 │  │   ├── git2 集成与变更检测                                   │
 │  │   ├── 自动版本号生成（卷.章.修订）                          │
@@ -68,7 +68,7 @@
 │  └── 规范文档修订                                              │
 │      └── Created-By 名称统一等勘误                             │
 │                                                                 │
-│  Phase 3 ─ 签名与验证（Signature & Verification）   📋 规划中   │
+│  Phase 3 ─ 签名与验证（Signature & Verification）   ✅ 已完成    │
 │  ├── ucx-sign：签名机制                                        │
 │  │   ├── Layer 1 — JAR 式签名（MF → SF → RSA/EC）             │
 │  │   ├── Layer 2 — APK v2 式全局签名                           │
@@ -118,7 +118,7 @@
 
 ```
 Phase 0 ──→ Phase 1 ──→ Phase 2 ──┬──→ Phase 3 ──→ Phase 4
-  ✅           ✅         📋       │       📋           📋
+  ✅           ✅         ✅       │       ✅           📋
                                    │
                                    └──→ Phase 5（Phase 3 完成后可启动）
                                             📋
@@ -142,8 +142,8 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──┬──→ Phase 3 ──→
 | 规范设计 | **已完成** | v0.0.0-alpha.1 | 10 份规范文档（00-09） |
 | Phase 0 | **已完成** | v0.1.0-alpha.1 | Workspace + ucx-types + 模块脚手架 |
 | Phase 1 | **已完成** | v0.1.0-alpha.2 | init/build/parse + CLI + 75 tests |
-| Phase 2 | 规划中 | — | 19 项待办已记录于 todo.md |
-| Phase 3 | 规划中 | — | 规范 05-signature-spec.md 已就绪 |
+| Phase 2 | **已完成** | v0.2.0-alpha.1 | 版本管理 + CLI 增强 + 122 tests |
+| Phase 3 | **已完成** | v0.3.0-alpha.1 | 双层签名 + 证书管理 + 完整验证 |
 | Phase 4 | 规划中 | — | 规范 04-crypto-spec.md 已就绪 |
 | Phase 5 | 规划中 | — | 规范 08/09 已就绪 |
 | 区块链 | 远期计划 | — | 规范 06-blockchain-ext.md 已就绪 |

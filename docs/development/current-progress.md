@@ -225,4 +225,34 @@
 
 ---
 
+### 2026-04-12 — Phase 3 完成：签名与验证（v0.3.0-alpha.1）
+
+**完成事项**：
+
+1. **ucx-sign 模块完整实现**（从 placeholder 到生产代码）
+   - `keys.rs`：Ed25519 密钥对生成 + PKCS#8 PEM 导入导出
+   - `cert.rs`：自签名 X.509 v3 证书生成（digitalSignature + codeSigning）
+   - `layer1.rs`：JAR 式签名（MANIFEST.MF → SF → EC）
+   - `layer2.rs`：APK v2 式全局签名块（1 MiB 分块 BLAKE3 摘要）
+   - `zip_binary.rs`：ZIP 二进制操作（EOCD 定位、签名块插入、偏移修正）
+   - `zip_rewrite.rs`：ZIP 重写（注入签名文件到归档）
+
+2. **ucx-verify 模块完整实现**（从 placeholder 到生产代码）
+   - 双层签名验证（Layer 1 文件级 + Layer 2 全局级）
+   - 签名者信息提取（CN、证书类型、指纹）
+   - 四级验证状态：VERIFIED / PARTIAL / UNSIGNED / INVALID
+
+3. **CLI 新增命令**
+   - `ucx keygen` — Ed25519 密钥对生成
+   - `ucx cert create` / `ucx cert info` — 证书管理
+   - `ucx sign` — 双层签名（替换 placeholder）
+   - `ucx verify --show-signers` — 签名验证升级
+
+**SEC-004 已解决**：完整双层签名体系实现
+
+**下一步**：
+- Phase 4：ucx-crypto（加密/解密）
+
+---
+
 *后续开发进度将追加在此文档中*

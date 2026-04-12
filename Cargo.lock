@@ -1675,7 +1675,7 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "ucx-build"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "ucx-crypto"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "ucx-init"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "chrono",
  "git2",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "ucx-parse"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "base64",
  "blake3",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "ucx-sign"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "base64",
  "blake3",
@@ -1753,13 +1753,16 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
+ "ucx-build",
+ "ucx-init",
+ "ucx-parse",
  "x509-cert",
  "zip",
 ]
 
 [[package]]
 name = "ucx-types"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "base64",
  "serde",
@@ -1771,19 +1774,30 @@ dependencies = [
 
 [[package]]
 name = "ucx-verify"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
+ "base64",
  "blake3",
+ "der",
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror",
  "tracing",
+ "ucx-build",
+ "ucx-init",
+ "ucx-parse",
+ "ucx-sign",
+ "ucx-types",
+ "x509-cert",
+ "zip",
 ]
 
 [[package]]
 name = "ucx-version"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -1811,7 +1825,7 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "unicodex-core"
-version = "0.2.0-alpha.1"
+version = "0.3.0-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
