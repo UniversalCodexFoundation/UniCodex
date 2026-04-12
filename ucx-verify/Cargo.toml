@@ -25,13 +25,37 @@ blake3 = { workspace = true }
 
 # --- Cryptography / 密码学 ---
 ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
+
+# --- Encoding / 编码 ---
+base64 = { workspace = true }
 
 # --- Serialization / 序列化 ---
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# --- Archive / 归档 ---
+zip = { workspace = true }
 
 # --- Error handling / 错误处理 ---
 thiserror = { workspace = true }
 
 # --- Logging / 日志 ---
 tracing = { workspace = true }
+
+# --- Certificate parsing / 证书解析 ---
+x509-cert = { workspace = true }
+der = { workspace = true }
+
+# --- Internal crates / 内部 crate ---
+ucx-sign = { workspace = true }    # Reuse signing types and helpers / 复用签名类型和辅助函数
+ucx-types = { workspace = true }   # Manifest parsing / Manifest 解析
+
+[dev-dependencies]
+# --- Testing / 测试 ---
+tempfile = { workspace = true }
+
+# --- Integration test dependencies / 集成测试依赖 ---
+ucx-init = { workspace = true }
+ucx-build = { workspace = true }
+ucx-parse = { workspace = true }
