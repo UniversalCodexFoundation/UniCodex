@@ -29,7 +29,9 @@ pub mod keys;
 /// 自签名 X.509 证书生成。
 pub mod cert;
 
-// pub mod layer1;  // Step 3: JAR-style signing / JAR 式签名
+/// Layer 1: JAR-style SF generation and Ed25519 signing.
+/// Layer 1: JAR 式 SF 生成与 Ed25519 签名。
+pub mod layer1;
 // pub mod layer2;  // Step 4: APK v2-style signing / APK v2 式签名
 
 // =============================================================================
