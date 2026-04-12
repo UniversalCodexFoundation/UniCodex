@@ -50,10 +50,17 @@ serde_json = { workspace = true }
 # --- Error handling / 错误处理 ---
 thiserror = { workspace = true }
 
+# --- Archive / 归档 ---
+zip = { workspace = true }
+
 # --- Logging / 日志 ---
 tracing = { workspace = true }
 
 [dev-dependencies]
 # --- Testing / 测试 ---
 tempfile = { workspace = true }
-zip = { workspace = true }
+
+# --- Integration test dependencies / 集成测试依赖 ---
+ucx-init = { workspace = true }
+ucx-build = { workspace = true }
+ucx-parse = { workspace = true }
