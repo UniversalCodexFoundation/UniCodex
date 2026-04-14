@@ -1,0 +1,187 @@
+# =============================================================================
+# Unicodex CI Workflow / Unicodex 持续集成工作流
+# =============================================================================
+# Runs on every push to main/master and every PR targeting main/master.
+# 5 parallel jobs: build (matrix), test, clippy, fmt, deny.
+#
+# 在每次推送到 main/master 和每个面向 main/master 的 PR 时运行。
+# 5 个并行 job：build（矩阵）、test、clippy、fmt、deny。
+# =============================================================================
+
+name: CI
+
+# -----------------------------------------------------------------------------
+# Trigger conditions / 触发条件
+# -----------------------------------------------------------------------------
+# Push to main/master (excluding tags) and PRs targeting main/master.
+# 推送到 main/master（排除 tag）以及面向 main/master 的 PR。
+# -----------------------------------------------------------------------------
+on:
+  push:
+    branches: [main, master]
+    tags-ignore: ["**"]
+  pull_request:
+    branches: [main, master]
+
+# -----------------------------------------------------------------------------
+# Global environment variables / 全局环境变量
+# -----------------------------------------------------------------------------
+env:
+  # Enable colored output in CI logs.
+  # 在 CI 日志中启用彩色输出。
+  CARGO_TERM_COLOR: always
+  # Print backtrace on test failures for easier debugging.
+  # 测试失败时打印回溯信息，方便调试。
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ===========================================================================
+  # Build — Cross-platform compilation check / 跨平台编译检查
+  # ===========================================================================
+  # Verifies the project compiles on Linux, Windows, and macOS.
+  # 验证项目在 Linux、Windows 和 macOS 上均可编译。
+  # ===========================================================================
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't cancel other platforms if one fails.
+      # 一个平台失败不取消其他平台。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      # --- Checkout repository / 检出仓库 ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Install Rust stable toolchain / 安装 Rust stable 工具链 ---
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # --- Cache Cargo artifacts / 缓存 Cargo 构建产物 ---
+      # Automatically caches based on Cargo.lock and rust-toolchain.
+      # 基于 Cargo.lock 和 rust-toolchain 自动缓存。
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --- Build all workspace crates and targets / 编译所有工作区 crate 和目标 ---
+      # --all-targets includes tests, benchmarks, and examples.
+      # --all-targets 包含测试、基准测试和示例。
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+
+  # ===========================================================================
+  # Test — Run all workspace tests / 运行所有工作区测试
+  # ===========================================================================
+  # Runs unit and integration tests on Ubuntu only.
+  # The project has no platform-specific conditional compilation (no cfg(target_os)).
+  #
+  # 仅在 Ubuntu 上运行单元和集成测试。
+  # 项目没有平台特定的条件编译代码（无 cfg(target_os)）。
+  # ===========================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --- Run all tests / 运行所有测试 ---
+      - name: Run tests
+        run: cargo test --workspace
+
+  # ===========================================================================
+  # Clippy — Code quality linting / 代码质量检查
+  # ===========================================================================
+  # Runs clippy with -D warnings (warnings treated as errors).
+  # continue-on-error: true — soft check, does not block PR merge.
+  #
+  # 使用 -D warnings 运行 clippy（警告视为错误）。
+  # continue-on-error: true — 软性检查，不阻断 PR 合并。
+  # ===========================================================================
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    # Soft check — does not block PR merge in alpha stage.
+    # 软性检查 — alpha 阶段不阻断 PR 合并。
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable with clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --- Run clippy on all targets / 对所有目标运行 clippy ---
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ===========================================================================
+  # Format — Code formatting check / 代码格式检查
+  # ===========================================================================
+  # Checks that all code is formatted with rustfmt (edition 2024).
+  # continue-on-error: true — soft check, does not block PR merge.
+  #
+  # 检查所有代码是否已用 rustfmt 格式化（edition 2024）。
+  # continue-on-error: true — 软性检查，不阻断 PR 合并。
+  # ===========================================================================
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    # Soft check — does not block PR merge in alpha stage.
+    # 软性检查 — alpha 阶段不阻断 PR 合并。
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable with rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      # --- Check formatting (no modification) / 检查格式（不修改文件）---
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ===========================================================================
+  # Deny — Dependency audit / 依赖审计
+  # ===========================================================================
+  # Uses cargo-deny to check licenses, advisories, bans, and sources.
+  # Reads deny.toml from the repository root.
+  # continue-on-error: true — soft check, alpha dependencies may have issues.
+  #
+  # 使用 cargo-deny 检查许可证、安全公告、禁用依赖和来源。
+  # 从仓库根目录读取 deny.toml。
+  # continue-on-error: true — 软性检查，alpha 阶段依赖可能有临时问题。
+  # ===========================================================================
+  deny:
+    name: Deny
+    runs-on: ubuntu-latest
+    # Soft check — alpha stage dependencies may have temporary issues.
+    # 软性检查 — alpha 阶段依赖可能有临时问题。
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Run cargo-deny checks / 运行 cargo-deny 检查 ---
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2

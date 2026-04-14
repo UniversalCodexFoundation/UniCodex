@@ -1,0 +1,11 @@
+# =============================================================================
+# Rustfmt Configuration / Rustfmt 格式化配置
+# =============================================================================
+# Specifies edition 2024 to match the project's Cargo.toml edition setting.
+# Edition 2024 has formatting differences from 2021 (e.g., let-else formatting).
+#
+# 指定 edition 2024 以匹配项目 Cargo.toml 中的 edition 设置。
+# Edition 2024 的格式化规则与 2021 有差异（如 let-else 格式化）。
+# =============================================================================
+
+edition = "2024"

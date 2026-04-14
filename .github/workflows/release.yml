@@ -1,0 +1,512 @@
+# =============================================================================
+# Unicodex Release Workflow / Unicodex 发布工作流
+# =============================================================================
+# Automated release pipeline for Unicodex CLI (`ucx`).
+#
+# Three trigger modes / 三种触发模式：
+#   1. Tag push (v*) → Official release / Tag 推送 → 正式版发布
+#   2. Branch push  → Pre-release snapshot / 分支推送 → 预发布快照
+#   3. Manual dispatch → Retroactive release / 手动触发 → 补发历史版本
+#
+# Four sequential jobs / 四个顺序 job：
+#   prepare → check → create-release → build (4-platform matrix)
+#
+# Unicodex CLI 自动发布流水线。
+# =============================================================================
+
+name: Release
+
+# -----------------------------------------------------------------------------
+# Trigger conditions / 触发条件
+# -----------------------------------------------------------------------------
+# - push.branches: all branch pushes → pre-release snapshots
+# - push.tags: v* tag pushes → official releases
+# - workflow_dispatch: manual trigger for retroactive releases
+#
+# Note: ci.yml has `tags-ignore: ["**"]`, so tag pushes only trigger this file.
+#
+# - push.branches: 所有分支推送 → 预发布快照
+# - push.tags: v* tag 推送 → 正式版发布
+# - workflow_dispatch: 手动触发，用于补发历史版本
+#
+# 注意：ci.yml 设置了 `tags-ignore: ["**"]`，tag 推送仅触发此工作流。
+# -----------------------------------------------------------------------------
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0-alpha.2) / 要发布的 tag'
+        required: true
+        type: string
+
+# -----------------------------------------------------------------------------
+# Concurrency control / 并发控制
+# -----------------------------------------------------------------------------
+# Only keep the latest build per ref. Cancels in-progress runs for the same ref.
+# 同一 ref 仅保留最新构建，取消同 ref 下的进行中运行。
+# -----------------------------------------------------------------------------
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# -----------------------------------------------------------------------------
+# Global environment variables / 全局环境变量
+# -----------------------------------------------------------------------------
+env:
+  # Binary name produced by unicodex-core crate.
+  # unicodex-core crate 产出的二进制名称。
+  BINARY_NAME: ucx
+  # Enable colored Cargo output in CI logs.
+  # 在 CI 日志中启用 Cargo 彩色输出。
+  CARGO_TERM_COLOR: always
+
+# -----------------------------------------------------------------------------
+# Permissions / 权限
+# -----------------------------------------------------------------------------
+# Minimal permissions: only write to releases (contents).
+# 最小权限：仅需写入 release（contents）。
+# -----------------------------------------------------------------------------
+permissions:
+  contents: write
+
+jobs:
+  # ===========================================================================
+  # Job 1: prepare — Extract version & determine release type
+  # ===========================================================================
+  # Reads workspace version from Cargo.toml, determines if this is an official
+  # release (tag push / manual dispatch) or a pre-release (branch push).
+  #
+  # 从 Cargo.toml 读取 workspace 版本，判断是正式版（tag / 手动）还是预发布。
+  # ===========================================================================
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+
+    outputs:
+      # Whether this is an official release (true/false).
+      # 是否为正式版发布。
+      is_release: ${{ steps.meta.outputs.is_release }}
+      # Git tag name for the release.
+      # Release 使用的 Git tag 名称。
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      # Human-readable release title.
+      # 人类可读的 release 标题。
+      release_name: ${{ steps.meta.outputs.release_name }}
+      # Version string used in artifact filenames.
+      # 用于产物文件名的版本字符串。
+      artifact_version: ${{ steps.meta.outputs.artifact_version }}
+      # Semantic version from Cargo.toml (e.g. 0.1.0-alpha.2).
+      # Cargo.toml 中的语义版本号。
+      app_version: ${{ steps.meta.outputs.app_version }}
+      # Build timestamp (for pre-release identification).
+      # 构建时间戳（用于预发布标识）。
+      timestamp: ${{ steps.meta.outputs.timestamp }}
+      # Auto-generated changelog from git log.
+      # 基于 git log 自动生成的变更日志。
+      changelog: ${{ steps.changelog.outputs.changelog }}
+
+    steps:
+      # --- Checkout repository with full history (for git log changelog) ---
+      # --- 检出仓库（完整历史，用于 git log 生成 changelog）---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --- Checkout specific tag if manually dispatched ---
+      # --- 手动触发时检出指定 tag ---
+      - name: Checkout tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout "${{ inputs.tag }}"
+
+      # -----------------------------------------------------------------
+      # Extract version & determine release metadata
+      # 提取版本号并确定发布元数据
+      # -----------------------------------------------------------------
+      - name: Determine release metadata
+        id: meta
+        run: |
+          # --- Extract workspace version from Cargo.toml ---
+          # --- 从 Cargo.toml 提取 workspace 版本 ---
+          # Uses sed to find version under [workspace.package] section.
+          # 使用 sed 在 [workspace.package] 段下查找 version 字段。
+          VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          echo "app_version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected workspace version: ${VERSION}"
+
+          # --- Generate build timestamp ---
+          # --- 生成构建时间戳 ---
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          echo "timestamp=${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+          # --- Get short commit hash ---
+          # --- 获取短 commit hash ---
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          # --- Three-tier release type detection ---
+          # --- 三级发布类型判断 ---
+
+          # Tier 1: Tag push (refs/tags/v*) or manual dispatch with tag input.
+          # 第一级：Tag 推送（refs/tags/v*）或手动触发带 tag 输入。
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_name=Unicodex ${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "Release type: official (tag push: ${TAG_NAME})"
+
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            TAG_NAME="${{ inputs.tag }}"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_name=Unicodex ${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "Release type: official (manual dispatch: ${TAG_NAME})"
+
+          # Tier 2: Current commit has a v* tag (race condition fallback).
+          # 第二级：当前 commit 上已存在 v* tag（竞争条件兜底）。
+          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -q '^v'; then
+            TAG_NAME=$(git describe --tags --exact-match HEAD 2>/dev/null | grep '^v' | head -1)
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_name=Unicodex ${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "Release type: official (existing tag on commit: ${TAG_NAME})"
+
+          # Tier 3: Branch push — pre-release snapshot.
+          # 第三级：分支推送 — 预发布快照。
+          else
+            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+            # Sanitize branch name for use in tag (replace / with -).
+            # 清理分支名用于 tag（将 / 替换为 -）。
+            SAFE_BRANCH=$(echo "${BRANCH_NAME}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+            TAG_NAME="build-${TIMESTAMP}-${SHORT_SHA}"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_name=Unicodex v${VERSION} Pre-release (${SAFE_BRANCH}@${SHORT_SHA})" >> "$GITHUB_OUTPUT"
+            echo "artifact_version=${VERSION}-build.${TIMESTAMP}.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "Release type: pre-release (branch: ${BRANCH_NAME}, tag: ${TAG_NAME})"
+          fi
+
+      # -----------------------------------------------------------------
+      # Generate changelog from git log
+      # 基于 git log 生成变更日志
+      # -----------------------------------------------------------------
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # --- Find the previous tag for changelog range ---
+          # --- 查找上一个 tag 以确定 changelog 范围 ---
+          if [[ "${{ steps.meta.outputs.is_release }}" == "true" ]]; then
+            CURRENT_TAG="${{ steps.meta.outputs.tag_name }}"
+            # Find the tag before the current one.
+            # 查找当前 tag 之前的那个 tag。
+            PREV_TAG=$(git tag --sort=-version:refname | grep '^v' | grep -A1 "^${CURRENT_TAG}$" | tail -1)
+            if [[ "${PREV_TAG}" == "${CURRENT_TAG}" ]] || [[ -z "${PREV_TAG}" ]]; then
+              # No previous tag found — use all history.
+              # 没有找到上一个 tag — 使用所有历史。
+              RANGE="HEAD"
+            else
+              RANGE="${PREV_TAG}..HEAD"
+            fi
+          else
+            # For pre-releases, find the most recent v* tag.
+            # 对于预发布，查找最近的 v* tag。
+            LATEST_TAG=$(git tag --sort=-version:refname | grep '^v' | head -1)
+            if [[ -n "${LATEST_TAG}" ]]; then
+              RANGE="${LATEST_TAG}..HEAD"
+            else
+              RANGE="HEAD"
+            fi
+          fi
+
+          echo "Changelog range: ${RANGE}"
+
+          # --- Generate formatted changelog ---
+          # --- 生成格式化的变更日志 ---
+          if [[ "${RANGE}" == "HEAD" ]]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" -20)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "${RANGE}")
+          fi
+
+          # Handle empty changelog.
+          # 处理空变更日志。
+          if [[ -z "${CHANGELOG}" ]]; then
+            CHANGELOG="- No changes since last release / 自上次发布以来无变更"
+          fi
+
+          # Use EOF delimiter for multi-line output.
+          # 使用 EOF 分隔符处理多行输出。
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "${CHANGELOG}"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # ===========================================================================
+  # Job 2: check — Quality gate / 质量门槛
+  # ===========================================================================
+  # Runs tests (hard gate) and clippy (soft gate) before creating the release.
+  # 在创建 release 前运行测试（硬性门槛）和 clippy（软性门槛）。
+  # ===========================================================================
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Checkout specific tag if manually dispatched ---
+      # --- 手动触发时检出指定 tag ---
+      - name: Checkout tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout "${{ inputs.tag }}"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # --- Cache Cargo artifacts (consistent with ci.yml) ---
+      # --- 缓存 Cargo 构建产物（与 ci.yml 一致）---
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --- Hard gate: all tests must pass ---
+      # --- 硬性门槛：所有测试必须通过 ---
+      - name: Run tests
+        run: cargo test --workspace
+
+      # --- Soft gate: clippy warnings (continue-on-error for doc warnings) ---
+      # --- 软性门槛：clippy 警告（因已有 doc 注释警告，允许继续）---
+      - name: Run clippy
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ===========================================================================
+  # Job 3: create-release — Create GitHub Release
+  # ===========================================================================
+  # Creates the GitHub Release with appropriate metadata. Assets are uploaded
+  # separately by the build job.
+  #
+  # 创建 GitHub Release 及相应元数据。构建产物由 build job 单独上传。
+  # ===========================================================================
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [prepare, check]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Create official release ---
+      # --- 创建正式版 release ---
+      - name: Create official release
+        if: needs.prepare.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          body: |
+            ## Unicodex v${{ needs.prepare.outputs.app_version }}
+
+            **Unicodex** — 统一标准的小说文件格式 (Unified Novel File Standard)
+
+            ### Changes / 变更日志
+
+            ${{ needs.prepare.outputs.changelog }}
+
+            ### Installation / 安装
+
+            | Platform | File | Architecture |
+            |----------|------|-------------|
+            | Linux | `ucx_${{ needs.prepare.outputs.artifact_version }}_linux_amd64.tar.gz` | x86_64 |
+            | Windows | `ucx_${{ needs.prepare.outputs.artifact_version }}_windows_amd64.zip` | x86_64 |
+            | macOS (Intel) | `ucx_${{ needs.prepare.outputs.artifact_version }}_darwin_amd64.tar.gz` | x86_64 |
+            | macOS (Apple Silicon) | `ucx_${{ needs.prepare.outputs.artifact_version }}_darwin_arm64.tar.gz` | ARM64 |
+
+            ### Verification / 校验
+
+            Each asset has a corresponding `.sha256` checksum file.
+            每个产物都附带对应的 `.sha256` 校验和文件。
+
+            ```bash
+            # Verify checksum / 验证校验和
+            sha256sum -c ucx_${{ needs.prepare.outputs.artifact_version }}_linux_amd64.tar.gz.sha256
+            ```
+          draft: false
+          prerelease: false
+          make_latest: true
+          generate_release_notes: true
+
+      # --- Create pre-release ---
+      # --- 创建预发布 release ---
+      - name: Create pre-release
+        if: needs.prepare.outputs.is_release != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          body: |
+            > ⚠️ **Pre-release build / 预发布构建** — This is an automated snapshot, not a stable release.
+            > 这是自动生成的快照构建，不是稳定版本。
+
+            **Branch / 分支**: `${{ github.ref_name }}`
+            **Commit**: `${{ github.sha }}`
+            **Build time / 构建时间**: `${{ needs.prepare.outputs.timestamp }}`
+            **Version / 版本**: `${{ needs.prepare.outputs.app_version }}`
+
+            ### Changes since last tag / 自上次 tag 以来的变更
+
+            ${{ needs.prepare.outputs.changelog }}
+          draft: false
+          prerelease: true
+          make_latest: false
+
+  # ===========================================================================
+  # Job 4: build — Cross-platform matrix build / 跨平台矩阵构建
+  # ===========================================================================
+  # Builds release binaries for 4 targets, packages them, generates checksums,
+  # and uploads to the GitHub Release created by the previous job.
+  #
+  # 为 4 个目标平台构建 release 二进制，打包、生成校验和，上传到 Release。
+  # ===========================================================================
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [prepare, check, create-release]
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      # Don't cancel other platforms if one fails.
+      # 一个平台失败不取消其他平台。
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux x86_64 ---
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            platform_suffix: linux_amd64
+            archive_ext: tar.gz
+          # --- Windows x86_64 ---
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            platform_suffix: windows_amd64
+            archive_ext: zip
+          # --- macOS x86_64 (Intel) ---
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            platform_suffix: darwin_amd64
+            archive_ext: tar.gz
+          # --- macOS ARM64 (Apple Silicon) ---
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            platform_suffix: darwin_arm64
+            archive_ext: tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Checkout specific tag if manually dispatched ---
+      # --- 手动触发时检出指定 tag ---
+      - name: Checkout tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout "${{ inputs.tag }}"
+
+      # --- Install Rust stable toolchain with target ---
+      # --- 安装 Rust stable 工具链及目标平台 ---
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # --- Cache Cargo artifacts (consistent with ci.yml) ---
+      # --- 缓存 Cargo 构建产物（与 ci.yml 一致）---
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # -----------------------------------------------------------------
+      # Build release binary for the target platform
+      # 为目标平台构建 release 二进制
+      # -----------------------------------------------------------------
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p unicodex-core
+
+      # -----------------------------------------------------------------
+      # Package artifacts (Unix: tar.gz, Windows: zip)
+      # 打包产物（Unix: tar.gz，Windows: zip）
+      # -----------------------------------------------------------------
+      - name: Package artifacts (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          # Define artifact name.
+          # 定义产物名称。
+          ARTIFACT_NAME="${{ env.BINARY_NAME }}_${{ needs.prepare.outputs.artifact_version }}_${{ matrix.platform_suffix }}"
+
+          # Create staging directory.
+          # 创建临时目录。
+          mkdir -p staging
+
+          # Copy binary to staging.
+          # 复制二进制到临时目录。
+          cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" staging/
+
+          # Create tar.gz archive.
+          # 创建 tar.gz 归档。
+          tar czf "${ARTIFACT_NAME}.tar.gz" -C staging "${{ env.BINARY_NAME }}"
+
+          # Generate SHA-256 checksum.
+          # 生成 SHA-256 校验和。
+          sha256sum "${ARTIFACT_NAME}.tar.gz" > "${ARTIFACT_NAME}.tar.gz.sha256"
+
+          echo "ARTIFACT_PATH=${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
+          echo "CHECKSUM_PATH=${ARTIFACT_NAME}.tar.gz.sha256" >> "$GITHUB_ENV"
+
+      - name: Package artifacts (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: bash
+        run: |
+          # Define artifact name.
+          # 定义产物名称。
+          ARTIFACT_NAME="${{ env.BINARY_NAME }}_${{ needs.prepare.outputs.artifact_version }}_${{ matrix.platform_suffix }}"
+
+          # Create staging directory.
+          # 创建临时目录。
+          mkdir -p staging
+
+          # Copy binary to staging (with .exe extension on Windows).
+          # 复制二进制到临时目录（Windows 带 .exe 扩展名）。
+          cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" staging/
+
+          # Create zip archive using 7z.
+          # 使用 7z 创建 zip 归档。
+          7z a "${ARTIFACT_NAME}.zip" ./staging/"${{ env.BINARY_NAME }}.exe"
+
+          # Generate SHA-256 checksum.
+          # 生成 SHA-256 校验和。
+          sha256sum "${ARTIFACT_NAME}.zip" > "${ARTIFACT_NAME}.zip.sha256"
+
+          echo "ARTIFACT_PATH=${ARTIFACT_NAME}.zip" >> "$GITHUB_ENV"
+          echo "CHECKSUM_PATH=${ARTIFACT_NAME}.zip.sha256" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------
+      # Upload artifacts to the GitHub Release
+      # 上传产物到 GitHub Release
+      # -----------------------------------------------------------------
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          files: |
+            ${{ env.ARTIFACT_PATH }}
+            ${{ env.CHECKSUM_PATH }}
