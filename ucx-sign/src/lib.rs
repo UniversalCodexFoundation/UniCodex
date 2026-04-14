@@ -177,6 +177,24 @@ pub fn sign(
     let ucx_data = std::fs::read(ucx_path)?;
 
     // -------------------------------------------------------------------------
+    // Step 4.5: Check for duplicate signer — reject if this signer_id already exists.
+    // 步骤 4.5：检查重复签名者 — 如果该 signer_id 已存在则拒绝。
+    // -------------------------------------------------------------------------
+    {
+        let cursor = std::io::Cursor::new(&ucx_data);
+        let archive = zip::ZipArchive::new(cursor).map_err(|e| {
+            SignError::SigningFailed(format!("failed to read archive: {e}"))
+        })?;
+        let sf_path = format!("META-INF/signatures/{signer_id}.SF");
+        if archive.file_names().any(|name| name == sf_path) {
+            return Err(SignError::SigningFailed(format!(
+                "signer '{signer_id}' already exists in this archive. \
+                 Use a different signer-id or remove the existing signature first."
+            )));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Step 5: Open as ZIP, read MANIFEST.MF content.
     // 步骤 5：作为 ZIP 打开，读取 MANIFEST.MF 内容。
     // -------------------------------------------------------------------------

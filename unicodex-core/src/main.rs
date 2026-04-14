@@ -861,11 +861,20 @@ fn main() -> anyhow::Result<()> {
                 let fingerprint_blake3 = ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
                 let fingerprint_sha256 = ucx_sign::cert::cert_fingerprint_sha256(&cert_der);
 
+                // Extract validity period and algorithm.
+                // 提取有效期和算法信息。
+                let (not_before, not_after) = ucx_sign::cert::cert_validity(&cert_der)
+                    .unwrap_or_else(|_| ("<unknown>".to_string(), "<unknown>".to_string()));
+                let algorithm = ucx_sign::cert::cert_algorithm(&cert_der)
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+
                 println!("=== Certificate Info ===");
                 println!("File: {}", file.display());
                 println!("Subject: CN={cn}");
                 println!("Issuer: CN={cn}");
                 println!("Type: self-signed");
+                println!("Algorithm: {algorithm}");
+                println!("Valid: {not_before} to {not_after}");
                 println!("Fingerprint (BLAKE3): {fingerprint_blake3}");
                 println!("Fingerprint (SHA-256): {fingerprint_sha256}");
             }

@@ -353,6 +353,38 @@ pub fn find_signing_block(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, SignE
 
     let block_start = cd_offset - 8 - block_size;
 
+    // Step 5: Read head size_of_block and verify it matches the tail value.
+    // 步骤 5：读取头部 size_of_block 并验证与尾部一致。
+    //
+    // The first 8 bytes of the signing block are the leading size_of_block.
+    // It must equal the trailing size_of_block for a well-formed block.
+    // 签名块的前 8 个字节是开头的 size_of_block。
+    // 对于格式正确的块，它必须与尾部的 size_of_block 相等。
+    let head_offset = block_start;
+    if head_offset + 8 > data.len() {
+        return Err(SignError::SigningFailed(
+            "signing block too small for head size_of_block".to_string(),
+        ));
+    }
+    let head_size = u64::from_le_bytes([
+        data[head_offset],
+        data[head_offset + 1],
+        data[head_offset + 2],
+        data[head_offset + 3],
+        data[head_offset + 4],
+        data[head_offset + 5],
+        data[head_offset + 6],
+        data[head_offset + 7],
+    ]) as usize;
+
+    // The tail size was read in Step 3 as `block_size`.
+    // 尾部大小在步骤 3 中以 `block_size` 读取。
+    if head_size != block_size {
+        return Err(SignError::SigningFailed(format!(
+            "signing block size mismatch: head={head_size}, tail={block_size}"
+        )));
+    }
+
     // The total signing block bytes = from block_start to cd_offset.
     // 签名块总字节 = 从 block_start 到 cd_offset。
     let signing_block = data[block_start..cd_offset].to_vec();

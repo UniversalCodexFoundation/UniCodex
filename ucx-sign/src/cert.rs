@@ -105,6 +105,20 @@ pub fn create_self_signed_cert(
         ));
     }
 
+    // --- Validate: certificate validity must not exceed 36500 days (approx. 100 years) ---
+    // 校验：证书有效期不得超过 36500 天（约 100 年）。
+    // This prevents overflow in date arithmetic when converting days to a Duration.
+    // 这可以防止将天数转换为 Duration 时日期运算溢出。
+    const MAX_DAYS_VALID: u32 = 36500;
+    if options.days_valid > MAX_DAYS_VALID {
+        return Err(SignError::CertificateError(
+            format!(
+                "certificate validity must not exceed {MAX_DAYS_VALID} days (100 years), got {} days",
+                options.days_valid
+            ),
+        ));
+    }
+
     // --- Convert the ed25519-dalek key to PKCS#8 DER for rcgen ---
     // 将 ed25519-dalek 密钥转换为 PKCS#8 DER 格式，供 rcgen 使用。
     let pkcs8_der = signing_key
@@ -357,6 +371,111 @@ pub fn cert_subject_cn(cert_der: &[u8]) -> Result<String, SignError> {
     ))
 }
 
+/// Extract the validity period from a DER-encoded certificate.
+/// Returns `(not_before, not_after)` as human-readable strings in "YYYY-MM-DD HH:MM:SS UTC" format.
+///
+/// 从 DER 编码证书中提取有效期。
+/// 返回 `(not_before, not_after)`，格式为 "YYYY-MM-DD HH:MM:SS UTC" 的可读字符串。
+///
+/// # Arguments / 参数
+///
+/// * `cert_der` - DER-encoded certificate bytes.
+///   DER 编码的证书字节。
+///
+/// # Returns / 返回
+///
+/// A tuple of `(not_before, not_after)` date strings.
+/// 由 `(not_before, not_after)` 日期字符串组成的元组。
+///
+/// # Errors / 错误
+///
+/// Returns `SignError::CertificateError` if the certificate cannot be parsed.
+/// 证书无法解析时返回 `SignError::CertificateError`。
+pub fn cert_validity(cert_der: &[u8]) -> Result<(String, String), SignError> {
+    // Parse the DER-encoded certificate.
+    // 解析 DER 编码的证书。
+    let cert = x509_cert::Certificate::from_der(cert_der)
+        .map_err(|e| SignError::CertificateError(format!("failed to parse certificate DER: {e}")))?;
+
+    // Extract the validity period from the TBS certificate.
+    // 从 TBS 证书中提取有效期。
+    let validity = &cert.tbs_certificate.validity;
+
+    // Format not_before and not_after as human-readable strings.
+    // 将 not_before 和 not_after 格式化为可读字符串。
+    let not_before = format!("{}", validity.not_before);
+    let not_after = format!("{}", validity.not_after);
+
+    Ok((not_before, not_after))
+}
+
+/// Extract the public key algorithm name from a DER-encoded certificate.
+/// Returns a human-readable algorithm name such as "Ed25519", "ECDSA", or the raw OID.
+///
+/// 从 DER 编码证书中提取公钥算法名称。
+/// 返回可读的算法名称，如 "Ed25519"、"ECDSA"，或原始 OID。
+///
+/// # Arguments / 参数
+///
+/// * `cert_der` - DER-encoded certificate bytes.
+///   DER 编码的证书字节。
+///
+/// # Returns / 返回
+///
+/// The algorithm name as a string.
+/// 以字符串形式返回算法名称。
+///
+/// # Errors / 错误
+///
+/// Returns `SignError::CertificateError` if the certificate cannot be parsed.
+/// 证书无法解析时返回 `SignError::CertificateError`。
+pub fn cert_algorithm(cert_der: &[u8]) -> Result<String, SignError> {
+    // Parse the DER-encoded certificate.
+    // 解析 DER 编码的证书。
+    let cert = x509_cert::Certificate::from_der(cert_der)
+        .map_err(|e| SignError::CertificateError(format!("failed to parse certificate DER: {e}")))?;
+
+    // Extract the algorithm OID from the Subject Public Key Info.
+    // 从主体公钥信息中提取算法 OID。
+    let algorithm_oid = cert
+        .tbs_certificate
+        .subject_public_key_info
+        .algorithm
+        .oid;
+
+    // Map well-known OIDs to human-readable names.
+    // 将已知的 OID 映射为可读名称。
+    //
+    // Ed25519:       1.3.101.112
+    // Ed448:         1.3.101.113
+    // ECDSA:         1.2.840.10045.2.1
+    // RSA:           1.2.840.113549.1.1.1
+    // RSA-PSS:       1.2.840.113549.1.1.10
+    let ed25519_oid = der::oid::ObjectIdentifier::new_unwrap("1.3.101.112");
+    let ed448_oid = der::oid::ObjectIdentifier::new_unwrap("1.3.101.113");
+    let ecdsa_oid = der::oid::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+    let rsa_oid = der::oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+    let rsa_pss_oid = der::oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10");
+
+    let name = if algorithm_oid == ed25519_oid {
+        "Ed25519".to_string()
+    } else if algorithm_oid == ed448_oid {
+        "Ed448".to_string()
+    } else if algorithm_oid == ecdsa_oid {
+        "ECDSA".to_string()
+    } else if algorithm_oid == rsa_oid {
+        "RSA".to_string()
+    } else if algorithm_oid == rsa_pss_oid {
+        "RSA-PSS".to_string()
+    } else {
+        // Unknown algorithm — return the raw OID string.
+        // 未知算法 — 返回原始 OID 字符串。
+        format!("Unknown (OID: {algorithm_oid})")
+    };
+
+    Ok(name)
+}
+
 // =============================================================================
 // Tests / 测试
 // =============================================================================
@@ -493,6 +612,55 @@ mod tests {
         );
     }
 
+    /// Test: create_self_signed_cert rejects days_valid exceeding 36500.
+    /// 测试：create_self_signed_cert 拒绝超过 36500 天的有效期。
+    #[test]
+    fn test_create_cert_rejects_excessive_days() {
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        // days_valid = u32::MAX should be rejected gracefully (no panic).
+        // days_valid = u32::MAX 应被优雅拒绝（不能 panic）。
+        let options = CertOptions {
+            common_name: "Overflow Test".to_string(),
+            days_valid: u32::MAX,
+            organization: None,
+        };
+
+        let result = create_self_signed_cert(&signing_key, &options);
+        assert!(result.is_err(), "u32::MAX days should be rejected");
+
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("36500"),
+            "error should mention the 36500-day limit, got: {err_msg}"
+        );
+
+        // days_valid = 36501 should also be rejected.
+        // days_valid = 36501 也应被拒绝。
+        let options2 = CertOptions {
+            common_name: "Boundary Test".to_string(),
+            days_valid: 36501,
+            organization: None,
+        };
+        assert!(
+            create_self_signed_cert(&signing_key, &options2).is_err(),
+            "36501 days should be rejected"
+        );
+
+        // days_valid = 36500 should succeed (boundary value).
+        // days_valid = 36500 应成功（边界值）。
+        let options3 = CertOptions {
+            common_name: "Max Valid Test".to_string(),
+            days_valid: 36500,
+            organization: None,
+        };
+        assert!(
+            create_self_signed_cert(&signing_key, &options3).is_ok(),
+            "36500 days should be accepted (boundary)"
+        );
+    }
+
     /// Test: certificate with organization includes the O field.
     /// 测试：带组织的证书包含 O 字段。
     #[test]
@@ -534,5 +702,59 @@ mod tests {
         }
 
         assert!(found_org, "certificate must include the Organization field");
+    }
+
+    /// Test: cert_validity extracts correct not_before and not_after dates.
+    /// 测试：cert_validity 提取正确的 not_before 和 not_after 日期。
+    #[test]
+    fn test_cert_validity_extracts_dates() {
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let options = CertOptions {
+            common_name: "Validity Test".to_string(),
+            days_valid: 365,
+            organization: None,
+        };
+
+        let cert_der = create_self_signed_cert(&signing_key, &options)
+            .expect("certificate generation should succeed");
+
+        let (not_before, not_after) = cert_validity(&cert_der)
+            .expect("cert_validity should succeed");
+
+        // Both date strings should be non-empty.
+        // 两个日期字符串都应非空。
+        assert!(!not_before.is_empty(), "not_before must not be empty");
+        assert!(!not_after.is_empty(), "not_after must not be empty");
+
+        // not_before and not_after should be different (365 days apart).
+        // not_before 和 not_after 应不同（相隔 365 天）。
+        assert_ne!(not_before, not_after, "not_before and not_after must differ");
+    }
+
+    /// Test: cert_algorithm returns "Ed25519" for Ed25519 certificates.
+    /// 测试：cert_algorithm 对 Ed25519 证书返回 "Ed25519"。
+    #[test]
+    fn test_cert_algorithm_returns_ed25519() {
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let options = CertOptions {
+            common_name: "Algorithm Test".to_string(),
+            days_valid: 365,
+            organization: None,
+        };
+
+        let cert_der = create_self_signed_cert(&signing_key, &options)
+            .expect("certificate generation should succeed");
+
+        let algorithm = cert_algorithm(&cert_der)
+            .expect("cert_algorithm should succeed");
+
+        assert_eq!(
+            algorithm, "Ed25519",
+            "Ed25519 certificate should report algorithm as 'Ed25519'"
+        );
     }
 }
