@@ -145,6 +145,32 @@ pub fn sign(
     let cert_der = cert::load_certificate(cert_path)?;
 
     // -------------------------------------------------------------------------
+    // Step 3.5: Verify that the private key matches the certificate's public key.
+    // 步骤 3.5：验证私钥与证书中的公钥一致。
+    // -------------------------------------------------------------------------
+    // Derive the verifying (public) key from the signing (private) key.
+    // 从签名（私）钥导出验证（公）钥。
+    let verifying_key = signing_key.verifying_key();
+
+    // Parse the certificate DER to extract the Subject Public Key Info (SPKI).
+    // 解析证书 DER 以提取主体公钥信息（SPKI）。
+    let parsed_cert = <x509_cert::Certificate as der::Decode>::from_der(&cert_der)
+        .map_err(|e| SignError::InvalidKey(format!("failed to parse certificate DER: {e}")))?;
+    let cert_public_key_bytes = parsed_cert
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .raw_bytes();
+
+    // Compare the certificate's public key with the one derived from the private key.
+    // 将证书中的公钥与从私钥导出的公钥进行比较。
+    if cert_public_key_bytes != verifying_key.as_bytes() {
+        return Err(SignError::InvalidKey(
+            "private key does not match certificate public key".to_string(),
+        ));
+    }
+
+    // -------------------------------------------------------------------------
     // Step 4: Read the UCX file into memory.
     // 步骤 4：将 UCX 文件读入内存。
     // -------------------------------------------------------------------------
@@ -239,6 +265,36 @@ pub fn sign(
 /// Returns `SignError` if key generation or file writing fails.
 /// 密钥生成或文件写入失败时返回 `SignError`。
 pub fn keygen(output_path: &std::path::Path) -> Result<(), SignError> {
+    // -------------------------------------------------------------------------
+    // Pre-check: refuse to overwrite existing key files.
+    // 预检查：拒绝覆盖已存在的密钥文件。
+    // -------------------------------------------------------------------------
+    if output_path.exists() {
+        return Err(SignError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "key file already exists: {}. Use a different path or delete the existing file.",
+                output_path.display()
+            ),
+        )));
+    }
+
+    // Build public key path (same logic as below: append ".pub" to OsString).
+    // 构建公钥路径（与下方逻辑一致：在 OsString 后追加 ".pub"）。
+    let mut pub_path_check = output_path.as_os_str().to_owned();
+    pub_path_check.push(".pub");
+    let pub_path_check = std::path::PathBuf::from(pub_path_check);
+
+    if pub_path_check.exists() {
+        return Err(SignError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "public key file already exists: {}. Use a different path or delete the existing file.",
+                pub_path_check.display()
+            ),
+        )));
+    }
+
     // Generate a new Ed25519 key pair.
     // 生成新的 Ed25519 密钥对。
     let (signing_key, verifying_key) = keys::generate_ed25519_keypair()?;

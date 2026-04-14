@@ -698,6 +698,24 @@ fn main() -> anyhow::Result<()> {
                             println!("      Layer 1: [{l1_icon}]  Layer 2: [{l2_icon}]");
                         }
                     }
+
+                    // Return non-zero exit code for INVALID or PARTIAL signature status.
+                    // INVALID 和 PARTIAL 签名状态应返回非零退出码。
+                    // VERIFIED and UNSIGNED are considered normal (exit 0):
+                    //   - VERIFIED: signatures are valid.
+                    //   - UNSIGNED: no signatures present, which is not an error.
+                    // VERIFIED 和 UNSIGNED 视为正常（exit 0）：
+                    //   - VERIFIED：签名有效。
+                    //   - UNSIGNED：未签名，不算错误。
+                    match report.status {
+                        ucx_verify::VerifyStatus::Invalid => {
+                            anyhow::bail!("signature verification failed");
+                        }
+                        ucx_verify::VerifyStatus::ValidWithWarnings => {
+                            anyhow::bail!("signature verification partially failed");
+                        }
+                        _ => {}
+                    }
                 }
                 Err(e) => {
                     println!();

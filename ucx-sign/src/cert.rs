@@ -97,6 +97,14 @@ pub fn create_self_signed_cert(
     signing_key: &SigningKey,
     options: &CertOptions,
 ) -> Result<Vec<u8>, SignError> {
+    // --- Validate: certificate validity must be at least 1 day ---
+    // 校验：证书有效期至少为 1 天。
+    if options.days_valid == 0 {
+        return Err(SignError::CertificateError(
+            "certificate validity must be at least 1 day".to_string(),
+        ));
+    }
+
     // --- Convert the ed25519-dalek key to PKCS#8 DER for rcgen ---
     // 将 ed25519-dalek 密钥转换为 PKCS#8 DER 格式，供 rcgen 使用。
     let pkcs8_der = signing_key
