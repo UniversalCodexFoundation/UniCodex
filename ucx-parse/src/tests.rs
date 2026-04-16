@@ -446,3 +446,118 @@ fn test_extract_to() {
         .expect("extracted codex.json should be valid JSON");
     assert_eq!(codex.title.main, "测试小说");
 }
+
+// =============================================================================
+// Encryption detection tests / 加密检测测试
+// =============================================================================
+
+/// UCXE magic number: [0x55, 0x43, 0x58, 0x45] = "UCXE".
+/// UCXE 魔数：[0x55, 0x43, 0x58, 0x45] = "UCXE"。
+const UCXE_MAGIC: [u8; 4] = [0x55, 0x43, 0x58, 0x45];
+
+/// Create a UCX ZIP where `content/chapter-001.md` contains UCXE-encrypted data.
+///
+/// The chapter content starts with the UCXE magic number followed by dummy
+/// ciphertext, simulating an encrypted chapter file.
+///
+/// 创建一个 UCX ZIP，其中 `content/chapter-001.md` 包含 UCXE 加密数据。
+/// 章节内容以 UCXE 魔数开头，后接虚拟密文，模拟加密的章节文件。
+fn create_test_ucx_with_encrypted_chapter(path: &Path) {
+    let codex_json = test_codex_json();
+    let struct_json = test_struct_json();
+
+    // 构造以 UCXE 魔数开头的假加密数据。
+    let mut encrypted_content: Vec<u8> = Vec::new();
+    encrypted_content.extend_from_slice(&UCXE_MAGIC);
+    encrypted_content.extend_from_slice(b"\x00\x01\x02\x03fake-ciphertext-data");
+
+    // 计算清单哈希（包含加密章节的原始字节）。
+    let manifest_files: Vec<(&str, &[u8])> = vec![
+        ("metadata/codex.json", codex_json.as_bytes()),
+        ("content/struct.json", struct_json.as_bytes()),
+        ("content/chapter-001.md", &encrypted_content),
+    ];
+    let manifest_mf = build_manifest_mf(&manifest_files);
+
+    let file = std::fs::File::create(path).expect("failed to create test ZIP file");
+    let mut zip = zip::ZipWriter::new(file);
+
+    let stored_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    zip.start_file("mimetype", stored_opts).unwrap();
+    zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
+
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.write_all(manifest_mf.as_bytes()).unwrap();
+
+    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.write_all(codex_json.as_bytes()).unwrap();
+
+    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.write_all(struct_json.as_bytes()).unwrap();
+
+    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.write_all(&encrypted_content).unwrap();
+
+    zip.finish().unwrap();
+}
+
+/// Test: is_chapter_encrypted should return true for UCXE magic data.
+///
+/// 测试：对于 UCXE 魔数数据，is_chapter_encrypted 应返回 true。
+#[test]
+fn test_is_chapter_encrypted_with_ucxe_magic() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ucx_path = tmp.path().join("encrypted.ucx");
+    create_test_ucx_with_encrypted_chapter(&ucx_path);
+
+    let mut archive = open(&ucx_path).expect("open() should succeed");
+
+    let encrypted = archive
+        .is_chapter_encrypted("chapter-001.md")
+        .expect("is_chapter_encrypted should not error");
+
+    assert!(encrypted, "chapter with UCXE magic should be detected as encrypted");
+}
+
+/// Test: is_chapter_encrypted should return false for normal plaintext data.
+///
+/// 测试：对于普通明文数据，is_chapter_encrypted 应返回 false。
+#[test]
+fn test_is_chapter_encrypted_with_normal_data() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ucx_path = tmp.path().join("normal.ucx");
+    create_test_ucx(&ucx_path);
+
+    let mut archive = open(&ucx_path).expect("open() should succeed");
+
+    let encrypted = archive
+        .is_chapter_encrypted("chapter-001.md")
+        .expect("is_chapter_encrypted should not error");
+
+    assert!(!encrypted, "normal plaintext chapter should not be detected as encrypted");
+}
+
+/// Test: read_chapter on an encrypted chapter should return ParseError::Encrypted.
+///
+/// 测试：对加密章节调用 read_chapter 应返回 ParseError::Encrypted 错误。
+#[test]
+fn test_read_chapter_encrypted_returns_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ucx_path = tmp.path().join("read_encrypted.ucx");
+    create_test_ucx_with_encrypted_chapter(&ucx_path);
+
+    let mut archive = open(&ucx_path).expect("open() should succeed");
+
+    let result = archive.read_chapter("chapter-001.md");
+    assert!(result.is_err(), "read_chapter should fail for encrypted chapter");
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ParseError::Encrypted(_)),
+        "expected ParseError::Encrypted, got: {err:?}"
+    );
+}
