@@ -18,6 +18,7 @@
 //! 同时处理 UCXE 二进制格式、密钥派生（Argon2id / PBKDF2）
 //! 和大文件分块加密（>64 MiB）。
 
+use std::path::Path;
 use thiserror::Error;
 
 // =============================================================================
@@ -238,45 +239,61 @@ impl Kdf {
 /// Reads plaintext from the source, encrypts it, and writes the UCXE
 /// formatted ciphertext to the destination.
 ///
+/// **Note**: AES-256-CBC is not supported in direct-key mode because it
+/// requires two independent 32-byte keys (64 bytes total). Use
+/// `encrypt_with_passphrase()` for AES-256-CBC, which derives 64 bytes via KDF.
+///
 /// 使用指定算法加密文件。
 /// 从源读取明文，加密后将 UCXE 格式的密文写入目标。
 ///
+/// **注意**：AES-256-CBC 在直接密钥模式下不受支持，因为它需要两个独立的
+/// 32 字节密钥（共 64 字节）。请使用 `encrypt_with_passphrase()` 进行
+/// AES-256-CBC 加密，该函数通过 KDF 派生 64 字节密钥。
+///
 /// # Arguments / 参数
 ///
-/// * `source`    - Path to the plaintext file.
-///   明文文件路径。
-/// * `dest`      - Path for the encrypted output.
-///   加密输出文件路径。
-/// * `key`       - The encryption key (32 bytes).
-///   加密密钥（32 字节）。
-/// * `algorithm` - The encryption algorithm to use.
-///   使用的加密算法。
+/// * `source`    - Path to the plaintext file / 明文文件路径。
+/// * `dest`      - Path for the encrypted output / 加密输出文件路径。
+/// * `key`       - The encryption key (32 bytes) / 加密密钥（32 字节）。
+/// * `algorithm` - The encryption algorithm to use / 使用的加密算法。
 ///
 /// # Returns / 返回
 ///
 /// Returns `Ok(())` on success, or a `CryptoError` on failure.
 /// 成功返回 `Ok(())`，失败返回 `CryptoError`。
 pub fn encrypt(
-    _source: &std::path::Path,
-    _dest: &std::path::Path,
-    _key: &[u8; 32],
-    _algorithm: Algorithm,
+    source: &Path,
+    dest: &Path,
+    key: &[u8; 32],
+    algorithm: Algorithm,
 ) -> Result<(), CryptoError> {
-    // TODO: Implement encryption (Step 6).
-    // TODO: 实现加密（Step 6）。
-    //
-    // Steps / 步骤:
-    // 1. Read plaintext from source.
-    //    从源读取明文。
-    // 2. Generate random IV/Nonce via CSPRNG.
-    //    通过 CSPRNG 生成随机 IV/Nonce。
-    // 3. Encrypt using the specified algorithm.
-    //    使用指定算法加密。
-    // 4. Assemble UCXE format: header + salt + IV + ciphertext + auth tag.
-    //    组装 UCXE 格式：头部 + salt + IV + 密文 + 认证标签。
-    // 5. Write to destination.
-    //    写入目标文件。
-    todo!("ucx-crypto: encryption not yet implemented")
+    // AES-256-CBC requires 64-byte key (enc_key + mac_key), reject in direct-key mode.
+    // AES-256-CBC 需要 64 字节密钥（enc_key + mac_key），直接密钥模式不支持。
+    if algorithm == Algorithm::Aes256Cbc {
+        return Err(CryptoError::UnsupportedAlgorithm(
+            "AES-256-CBC requires 64-byte key (enc_key + mac_key), use encrypt_with_passphrase()"
+                .into(),
+        ));
+    }
+
+    // Step 1: Read plaintext from source file.
+    // 第 1 步：从源文件读取明文。
+    let plaintext = std::fs::read(source)?;
+
+    // Step 2: Determine if chunked encryption is needed (>64 MiB).
+    // 第 2 步：判断是否需要分块加密（>64 MiB）。
+    let is_chunked = plaintext.len() > chunked::CHUNKED_THRESHOLD as usize;
+
+    // Step 3–5: Encrypt and build UCXE structure.
+    // 第 3–5 步：加密并构建 UCXE 结构。
+    let ucxe = encrypt_to_ucxe(key, &plaintext, algorithm, is_chunked, Kdf::None, &format::KdfParams::None, &[])?;
+
+    // Step 6: Serialize and write to destination.
+    // 第 6 步：序列化并写入目标文件。
+    let bytes = format::serialize_ucxe(&ucxe)?;
+    std::fs::write(dest, bytes)?;
+
+    Ok(())
 }
 
 /// Decrypt a UCXE formatted file.
@@ -284,41 +301,406 @@ pub fn encrypt(
 /// Reads the encrypted file, verifies the authentication tag,
 /// and returns the decrypted plaintext.
 ///
+/// If the file was encrypted with a KDF (passphrase mode), this function
+/// returns an error — use `decrypt_with_passphrase()` instead.
+///
 /// 解密 UCXE 格式文件。
 /// 读取加密文件，验证认证标签，并返回解密后的明文。
 ///
+/// 如果文件使用 KDF（口令模式）加密，此函数会返回错误
+/// —— 请改用 `decrypt_with_passphrase()`。
+///
 /// # Arguments / 参数
 ///
-/// * `source` - Path to the UCXE encrypted file.
-///   UCXE 加密文件路径。
-/// * `key`    - The decryption key (32 bytes).
-///   解密密钥（32 字节）。
+/// * `source` - Path to the UCXE encrypted file / UCXE 加密文件路径。
+/// * `key`    - The decryption key (32 bytes) / 解密密钥（32 字节）。
 ///
 /// # Returns / 返回
 ///
 /// Returns the decrypted plaintext bytes, or a `CryptoError` on failure.
 /// 返回解密后的明文字节，或在失败时返回 `CryptoError`。
 pub fn decrypt(
-    _source: &std::path::Path,
-    _key: &[u8; 32],
+    source: &Path,
+    key: &[u8; 32],
 ) -> Result<Vec<u8>, CryptoError> {
-    // TODO: Implement decryption (Step 6).
-    // TODO: 实现解密（Step 6）。
-    //
-    // Steps / 步骤:
-    // 1. Read the UCXE file.
-    //    读取 UCXE 文件。
-    // 2. Check magic number (must be "UCXE").
-    //    检查魔数（必须为 "UCXE"）。
-    // 3. Parse header fields (algorithm, KDF, salt, IV, ciphertext, tag).
-    //    解析头部字段。
-    // 4. Verify authentication tag FIRST (before decrypting).
-    //    首先验证认证标签（解密之前）。
-    // 5. Decrypt ciphertext.
-    //    解密密文。
-    // 6. Return plaintext.
-    //    返回明文。
-    todo!("ucx-crypto: decryption not yet implemented")
+    // Step 1: Read the UCXE file bytes.
+    // 第 1 步：读取 UCXE 文件字节。
+    let data = std::fs::read(source)?;
+
+    // Step 2: Parse the UCXE binary format.
+    // 第 2 步：解析 UCXE 二进制格式。
+    let ucxe = format::parse_ucxe(&data)?;
+
+    // Step 3: Reject KDF-protected files (need passphrase).
+    // 第 3 步：拒绝 KDF 保护的文件（需要口令）。
+    if ucxe.header.kdf != Kdf::None {
+        return Err(CryptoError::KeyDerivation(
+            "file was encrypted with a passphrase, use decrypt_with_passphrase() / \
+             文件使用口令加密，请使用 decrypt_with_passphrase()"
+                .into(),
+        ));
+    }
+
+    // Step 4: Decrypt based on algorithm and chunked mode.
+    // 第 4 步：根据算法和分块模式解密。
+    decrypt_ucxe_payload(key, &ucxe)
+}
+
+/// Encrypt a file using a passphrase (with KDF key derivation).
+///
+/// Generates a random salt, derives the encryption key(s) from the passphrase
+/// using the specified KDF, encrypts the plaintext, and writes a UCXE file
+/// containing the KDF parameters so the file can be decrypted with only the
+/// passphrase.
+///
+/// 使用口令加密文件（通过 KDF 密钥派生）。
+/// 生成随机盐值，通过指定 KDF 从口令派生加密密钥，加密明文，
+/// 并写入包含 KDF 参数的 UCXE 文件，使得仅需口令即可解密。
+///
+/// # Arguments / 参数
+///
+/// * `source`    - Path to the plaintext file / 明文文件路径。
+/// * `dest`      - Path for the encrypted output / 加密输出文件路径。
+/// * `passphrase` - The passphrase string / 口令字符串。
+/// * `algorithm` - The encryption algorithm to use / 使用的加密算法。
+/// * `kdf_type`  - The KDF to use (Argon2id or Pbkdf2) / 使用的 KDF。
+///
+/// # Returns / 返回
+///
+/// Returns `Ok(())` on success, or a `CryptoError` on failure.
+/// 成功返回 `Ok(())`，失败返回 `CryptoError`。
+pub fn encrypt_with_passphrase(
+    source: &Path,
+    dest: &Path,
+    passphrase: &str,
+    algorithm: Algorithm,
+    kdf_type: Kdf,
+) -> Result<(), CryptoError> {
+    // Use default KDF parameters.
+    // 使用默认 KDF 参数。
+    let kdf_params = default_kdf_params(kdf_type)?;
+    encrypt_with_passphrase_and_params(source, dest, passphrase, algorithm, kdf_type, &kdf_params)
+}
+
+/// Internal: encrypt with custom KDF parameters (used by tests for faster execution).
+///
+/// 内部函数：使用自定义 KDF 参数加密（测试中使用以加速执行）。
+fn encrypt_with_passphrase_and_params(
+    source: &Path,
+    dest: &Path,
+    passphrase: &str,
+    algorithm: Algorithm,
+    kdf_type: Kdf,
+    kdf_params: &format::KdfParams,
+) -> Result<(), CryptoError> {
+    // Step 1: Generate random salt.
+    // 第 1 步：生成随机盐值。
+    let salt = kdf::generate_salt();
+
+    // Step 2: Determine output length — AES-CBC needs 64 bytes, others need 32.
+    // 第 2 步：确定输出长度 —— AES-CBC 需要 64 字节，其他需要 32 字节。
+    let output_len = if algorithm == Algorithm::Aes256Cbc { 64 } else { 32 };
+
+    // Step 3: Derive key(s) from passphrase.
+    // 第 3 步：从口令派生密钥。
+    let derived = kdf::derive_key(passphrase.as_bytes(), &salt, kdf_type, kdf_params, output_len)?;
+
+    // Step 4: Read plaintext.
+    // 第 4 步：读取明文。
+    let plaintext = std::fs::read(source)?;
+
+    // Step 5: Determine if chunked mode is needed.
+    // 第 5 步：判断是否需要分块模式。
+    // AES-CBC does not support chunked mode, so skip for CBC even if large.
+    // AES-CBC 不支持分块模式，因此即使文件很大也不使用分块。
+    let is_chunked = algorithm != Algorithm::Aes256Cbc
+        && plaintext.len() > chunked::CHUNKED_THRESHOLD as usize;
+
+    // Step 6: Extract the 32-byte encryption key (first 32 bytes of derived output).
+    // 第 6 步：提取 32 字节加密密钥（派生输出的前 32 字节）。
+    let key: [u8; 32] = derived[..32].try_into().expect("derived key >= 32 bytes");
+
+    // Step 7: Encrypt and build UCXE. For AES-CBC, pass the full 64-byte key via special path.
+    // 第 7 步：加密并构建 UCXE。对于 AES-CBC，通过特殊路径传递完整 64 字节密钥。
+    let ucxe = if algorithm == Algorithm::Aes256Cbc {
+        encrypt_aes_cbc_to_ucxe(&derived, &plaintext, kdf_type, kdf_params, &salt)?
+    } else {
+        encrypt_to_ucxe(&key, &plaintext, algorithm, is_chunked, kdf_type, kdf_params, &salt)?
+    };
+
+    // Step 8: Serialize and write.
+    // 第 8 步：序列化并写入。
+    let bytes = format::serialize_ucxe(&ucxe)?;
+    std::fs::write(dest, bytes)?;
+
+    Ok(())
+}
+
+/// Decrypt a UCXE file using a passphrase.
+///
+/// Reads the UCXE file, extracts KDF parameters, derives the key from
+/// the passphrase, and decrypts the ciphertext.
+///
+/// 使用口令解密 UCXE 文件。
+/// 读取 UCXE 文件，提取 KDF 参数，从口令派生密钥，并解密密文。
+///
+/// # Arguments / 参数
+///
+/// * `source`     - Path to the UCXE encrypted file / UCXE 加密文件路径。
+/// * `passphrase` - The passphrase string / 口令字符串。
+///
+/// # Returns / 返回
+///
+/// Returns the decrypted plaintext bytes, or a `CryptoError` on failure.
+/// 返回解密后的明文字节，或在失败时返回 `CryptoError`。
+pub fn decrypt_with_passphrase(
+    source: &Path,
+    passphrase: &str,
+) -> Result<Vec<u8>, CryptoError> {
+    // Step 1: Read and parse UCXE.
+    // 第 1 步：读取并解析 UCXE。
+    let data = std::fs::read(source)?;
+    let ucxe = format::parse_ucxe(&data)?;
+
+    // Step 2: Ensure a KDF is specified.
+    // 第 2 步：确保指定了 KDF。
+    if ucxe.header.kdf == Kdf::None {
+        return Err(CryptoError::KeyDerivation(
+            "file was not encrypted with a passphrase (KDF=None) / \
+             文件未使用口令加密（KDF=None）"
+                .into(),
+        ));
+    }
+
+    // Step 3: Determine output length based on algorithm.
+    // 第 3 步：根据算法确定输出长度。
+    let output_len = if ucxe.header.algorithm == Algorithm::Aes256Cbc { 64 } else { 32 };
+
+    // Step 4: Convert salt to fixed-size array.
+    // 第 4 步：将盐值转换为固定大小数组。
+    let salt: [u8; 16] = ucxe.salt.clone().try_into().map_err(|_| {
+        CryptoError::InvalidFormat(format!(
+            "salt length must be 16, got {} / 盐值长度必须为 16，实际为 {}",
+            ucxe.salt.len(),
+            ucxe.salt.len()
+        ))
+    })?;
+
+    // Step 5: Derive key(s) from passphrase.
+    // 第 5 步：从口令派生密钥。
+    let derived = kdf::derive_key(
+        passphrase.as_bytes(),
+        &salt,
+        ucxe.header.kdf,
+        &ucxe.kdf_params,
+        output_len,
+    )?;
+
+    // Step 6: Decrypt based on algorithm.
+    // 第 6 步：根据算法解密。
+    if ucxe.header.algorithm == Algorithm::Aes256Cbc {
+        decrypt_aes_cbc_payload(&derived, &ucxe)
+    } else {
+        let key: [u8; 32] = derived[..32].try_into().expect("derived key >= 32 bytes");
+        decrypt_ucxe_payload(&key, &ucxe)
+    }
+}
+
+// =============================================================================
+// Internal helpers / 内部辅助函数
+// =============================================================================
+
+/// Build default KDF parameters for the given KDF type.
+/// 为给定 KDF 类型构建默认参数。
+fn default_kdf_params(kdf_type: Kdf) -> Result<format::KdfParams, CryptoError> {
+    match kdf_type {
+        Kdf::None => Err(CryptoError::KeyDerivation(
+            "KDF type cannot be None for passphrase mode / 口令模式下 KDF 类型不能为 None".into(),
+        )),
+        Kdf::Argon2id => Ok(format::KdfParams::Argon2id {
+            memory_cost_kib: kdf::ARGON2ID_DEFAULT_MEMORY_KIB,
+            time_cost: kdf::ARGON2ID_DEFAULT_TIME_COST,
+            parallelism: kdf::ARGON2ID_DEFAULT_PARALLELISM,
+        }),
+        Kdf::Pbkdf2HmacSha256 => Ok(format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_DEFAULT_ITERATIONS,
+        }),
+    }
+}
+
+/// Core encryption logic: encrypt plaintext and build a UcxeFile struct.
+/// Works for AEAD algorithms (AES-GCM, ChaCha20-Poly1305).
+///
+/// 核心加密逻辑：加密明文并构建 UcxeFile 结构体。
+/// 适用于 AEAD 算法（AES-GCM, ChaCha20-Poly1305）。
+fn encrypt_to_ucxe(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    algorithm: Algorithm,
+    is_chunked: bool,
+    kdf_type: Kdf,
+    kdf_params: &format::KdfParams,
+    salt: &[u8],
+) -> Result<format::UcxeFile, CryptoError> {
+    if is_chunked {
+        // Chunked mode: generate base nonce, encrypt in chunks, serialize.
+        // 分块模式：生成基础 nonce，分块加密，序列化。
+        let mut base_nonce = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut base_nonce);
+
+        let chunked_ct = chunked::encrypt_chunked(key, &base_nonce, plaintext, algorithm)?;
+        let serialized = chunked::serialize_chunks(&chunked_ct);
+
+        Ok(format::UcxeFile {
+            header: format::UcxeHeader {
+                format_version: UCXE_FORMAT_VERSION,
+                algorithm,
+                kdf: kdf_type,
+                chunked: true,
+            },
+            kdf_params: kdf_params.clone(),
+            salt: salt.to_vec(),
+            iv: base_nonce.to_vec(),
+            ciphertext: serialized,
+            // Chunked mode: no top-level tag (each chunk has its own tag).
+            // 分块模式：无顶层标签（每个分块有自己的标签）。
+            tag: vec![0u8; format::tag_length(algorithm)],
+        })
+    } else {
+        // Non-chunked mode: encrypt the entire plaintext at once.
+        // 非分块模式：一次性加密全部明文。
+        let (ciphertext, nonce, tag) = match algorithm {
+            Algorithm::Aes256Gcm => aes_gcm::encrypt(key, plaintext)?,
+            Algorithm::ChaCha20Poly1305 => chacha20::encrypt(key, plaintext)?,
+            Algorithm::Aes256Cbc => {
+                return Err(CryptoError::UnsupportedAlgorithm(
+                    "AES-256-CBC should use encrypt_aes_cbc_to_ucxe() / \
+                     AES-256-CBC 应使用 encrypt_aes_cbc_to_ucxe()"
+                        .into(),
+                ));
+            }
+        };
+
+        Ok(format::UcxeFile {
+            header: format::UcxeHeader {
+                format_version: UCXE_FORMAT_VERSION,
+                algorithm,
+                kdf: kdf_type,
+                chunked: false,
+            },
+            kdf_params: kdf_params.clone(),
+            salt: salt.to_vec(),
+            iv: nonce.to_vec(),
+            ciphertext,
+            tag: tag.to_vec(),
+        })
+    }
+}
+
+/// Encrypt plaintext using AES-256-CBC + HMAC-SHA256 (requires 64-byte key).
+///
+/// AES-256-CBC 加密（需要 64 字节密钥：前 32 字节 enc_key + 后 32 字节 mac_key）。
+fn encrypt_aes_cbc_to_ucxe(
+    derived: &[u8],
+    plaintext: &[u8],
+    kdf_type: Kdf,
+    kdf_params: &format::KdfParams,
+    salt: &[u8],
+) -> Result<format::UcxeFile, CryptoError> {
+    // Split derived key into enc_key (first 32B) and mac_key (last 32B).
+    // 将派生密钥分为 enc_key（前 32B）和 mac_key（后 32B）。
+    let enc_key: [u8; 32] = derived[..32].try_into().expect("derived >= 64 bytes");
+    let mac_key: [u8; 32] = derived[32..64].try_into().expect("derived >= 64 bytes");
+
+    let (ciphertext, iv, hmac_tag) = aes_cbc::encrypt(&enc_key, &mac_key, plaintext)?;
+
+    Ok(format::UcxeFile {
+        header: format::UcxeHeader {
+            format_version: UCXE_FORMAT_VERSION,
+            algorithm: Algorithm::Aes256Cbc,
+            kdf: kdf_type,
+            chunked: false,
+        },
+        kdf_params: kdf_params.clone(),
+        salt: salt.to_vec(),
+        iv: iv.to_vec(),
+        ciphertext,
+        tag: hmac_tag.to_vec(),
+    })
+}
+
+/// Core decryption logic for AEAD algorithms (AES-GCM, ChaCha20-Poly1305).
+///
+/// AEAD 算法（AES-GCM, ChaCha20-Poly1305）的核心解密逻辑。
+fn decrypt_ucxe_payload(
+    key: &[u8; 32],
+    ucxe: &format::UcxeFile,
+) -> Result<Vec<u8>, CryptoError> {
+    let algorithm = ucxe.header.algorithm;
+
+    if ucxe.header.chunked {
+        // Chunked mode: deserialize chunks, then decrypt.
+        // 分块模式：反序列化分块，然后解密。
+        let nonce: [u8; 12] = ucxe.iv.clone().try_into().map_err(|_| {
+            CryptoError::InvalidFormat(format!(
+                "IV length must be 12 for chunked AEAD, got {} / \
+                 分块 AEAD 的 IV 长度必须为 12，实际为 {}",
+                ucxe.iv.len(),
+                ucxe.iv.len()
+            ))
+        })?;
+
+        let chunked_ct = chunked::deserialize_chunks(&ucxe.ciphertext, algorithm)?;
+        chunked::decrypt_chunked(key, &nonce, &chunked_ct, algorithm)
+    } else {
+        // Non-chunked mode: decrypt directly.
+        // 非分块模式：直接解密。
+        match algorithm {
+            Algorithm::Aes256Gcm => {
+                let nonce: [u8; 12] = ucxe.iv.clone().try_into().map_err(|_| {
+                    CryptoError::InvalidFormat("AES-GCM nonce must be 12 bytes".into())
+                })?;
+                let tag: [u8; 16] = ucxe.tag.clone().try_into().map_err(|_| {
+                    CryptoError::InvalidFormat("AES-GCM tag must be 16 bytes".into())
+                })?;
+                aes_gcm::decrypt(key, &nonce, &ucxe.ciphertext, &tag)
+            }
+            Algorithm::ChaCha20Poly1305 => {
+                let nonce: [u8; 12] = ucxe.iv.clone().try_into().map_err(|_| {
+                    CryptoError::InvalidFormat("ChaCha20 nonce must be 12 bytes".into())
+                })?;
+                let tag: [u8; 16] = ucxe.tag.clone().try_into().map_err(|_| {
+                    CryptoError::InvalidFormat("ChaCha20 tag must be 16 bytes".into())
+                })?;
+                chacha20::decrypt(key, &nonce, &ucxe.ciphertext, &tag)
+            }
+            Algorithm::Aes256Cbc => Err(CryptoError::UnsupportedAlgorithm(
+                "AES-256-CBC requires passphrase mode for decryption / \
+                 AES-256-CBC 解密需要口令模式"
+                    .into(),
+            )),
+        }
+    }
+}
+
+/// Decrypt AES-256-CBC payload using 64-byte derived key.
+///
+/// 使用 64 字节派生密钥解密 AES-256-CBC 载荷。
+fn decrypt_aes_cbc_payload(
+    derived: &[u8],
+    ucxe: &format::UcxeFile,
+) -> Result<Vec<u8>, CryptoError> {
+    let enc_key: [u8; 32] = derived[..32].try_into().expect("derived >= 64 bytes");
+    let mac_key: [u8; 32] = derived[32..64].try_into().expect("derived >= 64 bytes");
+
+    let iv: [u8; 16] = ucxe.iv.clone().try_into().map_err(|_| {
+        CryptoError::InvalidFormat("AES-CBC IV must be 16 bytes".into())
+    })?;
+    let hmac_tag: [u8; 32] = ucxe.tag.clone().try_into().map_err(|_| {
+        CryptoError::InvalidFormat("AES-CBC HMAC tag must be 32 bytes".into())
+    })?;
+
+    aes_cbc::decrypt(&enc_key, &mac_key, &iv, &ucxe.ciphertext, &hmac_tag)
 }
 
 /// Check if a file is UCXE encrypted by examining its magic number.
@@ -374,8 +756,6 @@ mod tests {
     /// 测试所有 `Algorithm` 变体的 `from_u8` / `to_u8` 往返转换。
     #[test]
     fn test_algorithm_from_to_u8() {
-        // Verify each known algorithm ID round-trips correctly.
-        // 验证每个已知算法 ID 能正确往返转换。
         for (byte, expected) in [
             (0x01u8, Algorithm::Aes256Gcm),
             (0x02, Algorithm::Aes256Cbc),
@@ -386,8 +766,6 @@ mod tests {
             assert_eq!(algo.to_u8(), byte);
         }
 
-        // Unknown algorithm IDs should return None.
-        // 未知算法 ID 应返回 None。
         assert!(Algorithm::from_u8(0x00).is_none());
         assert!(Algorithm::from_u8(0xFF).is_none());
     }
@@ -396,8 +774,6 @@ mod tests {
     /// 测试所有 `Kdf` 变体的 `from_u8` / `to_u8` 往返转换。
     #[test]
     fn test_kdf_from_to_u8() {
-        // Verify each known KDF ID round-trips correctly.
-        // 验证每个已知 KDF ID 能正确往返转换。
         for (byte, expected) in [
             (0x00u8, Kdf::None),
             (0x01, Kdf::Argon2id),
@@ -408,9 +784,173 @@ mod tests {
             assert_eq!(kdf.to_u8(), byte);
         }
 
-        // Unknown KDF IDs should return None.
-        // 未知 KDF ID 应返回 None。
         assert!(Kdf::from_u8(0x03).is_none());
         assert!(Kdf::from_u8(0xFF).is_none());
+    }
+
+    // =========================================================================
+    // Integration tests for encrypt/decrypt API.
+    // 加密/解密 API 集成测试。
+    // =========================================================================
+
+    /// Helper: write test plaintext to a temp file and return the paths.
+    /// 辅助函数：将测试明文写入临时文件并返回路径。
+    fn setup_temp_files(plaintext: &[u8]) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let src = dir.path().join("plain.txt");
+        let dst = dir.path().join("encrypted.ucxe");
+        std::fs::write(&src, plaintext).expect("failed to write plaintext");
+        (dir, src, dst)
+    }
+
+    /// Test 1: AES-256-GCM file encrypt/decrypt round-trip.
+    /// 测试 1：AES-256-GCM 文件加密/解密往返。
+    #[test]
+    fn test_encrypt_decrypt_aes_gcm() {
+        let key = [0x42u8; 32];
+        let plaintext = b"Hello, AES-GCM encryption!";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm).expect("encrypt should succeed");
+        let decrypted = decrypt(&dst, &key).expect("decrypt should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test 2: ChaCha20-Poly1305 file encrypt/decrypt round-trip.
+    /// 测试 2：ChaCha20-Poly1305 文件加密/解密往返。
+    #[test]
+    fn test_encrypt_decrypt_chacha20() {
+        let key = [0x99u8; 32];
+        let plaintext = b"Hello, ChaCha20 encryption!";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        encrypt(&src, &dst, &key, Algorithm::ChaCha20Poly1305).expect("encrypt should succeed");
+        let decrypted = decrypt(&dst, &key).expect("decrypt should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test 3: Argon2id passphrase mode encrypt/decrypt round-trip.
+    /// Uses small Argon2id parameters for fast testing.
+    ///
+    /// 测试 3：Argon2id 口令模式加密/解密往返。
+    /// 使用较小 Argon2id 参数以加速测试。
+    #[test]
+    fn test_encrypt_decrypt_passphrase_argon2id() {
+        let plaintext = b"Secret data with Argon2id KDF";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        // Use small Argon2id params for fast testing.
+        // 使用小 Argon2id 参数以加速测试。
+        let kdf_params = format::KdfParams::Argon2id {
+            memory_cost_kib: 256,
+            time_cost: 1,
+            parallelism: 1,
+        };
+
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "test-passphrase", Algorithm::Aes256Gcm, Kdf::Argon2id, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        let decrypted = decrypt_with_passphrase(&dst, "test-passphrase")
+            .expect("decrypt should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test 4: PBKDF2 passphrase mode encrypt/decrypt round-trip.
+    /// Uses small iteration count for fast testing.
+    ///
+    /// 测试 4：PBKDF2 口令模式加密/解密往返。
+    /// 使用较少迭代次数以加速测试。
+    #[test]
+    fn test_encrypt_decrypt_passphrase_pbkdf2() {
+        let plaintext = b"Secret data with PBKDF2 KDF";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "test-passphrase", Algorithm::ChaCha20Poly1305,
+            Kdf::Pbkdf2HmacSha256, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        let decrypted = decrypt_with_passphrase(&dst, "test-passphrase")
+            .expect("decrypt should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test 5: Wrong key should fail decryption.
+    /// 测试 5：错误密钥应导致解密失败。
+    #[test]
+    fn test_wrong_key_fails() {
+        let key = [0x42u8; 32];
+        let wrong_key = [0x00u8; 32];
+        let plaintext = b"sensitive data";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm).expect("encrypt should succeed");
+
+        let result = decrypt(&dst, &wrong_key);
+        assert!(result.is_err(), "wrong key should fail decryption");
+    }
+
+    /// Test 6: Wrong passphrase should fail decryption.
+    /// 测试 6：错误口令应导致解密失败。
+    #[test]
+    fn test_wrong_passphrase_fails() {
+        let plaintext = b"passphrase-protected data";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "correct-passphrase", Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        let result = decrypt_with_passphrase(&dst, "wrong-passphrase");
+        assert!(result.is_err(), "wrong passphrase should fail decryption");
+    }
+
+    /// Test 7: AES-256-CBC direct key mode should be rejected.
+    /// 测试 7：AES-256-CBC 直接密钥模式应被拒绝。
+    #[test]
+    fn test_aes_cbc_direct_key_rejected() {
+        let key = [0x42u8; 32];
+        let plaintext = b"should not encrypt";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let result = encrypt(&src, &dst, &key, Algorithm::Aes256Cbc);
+        assert!(
+            matches!(result, Err(CryptoError::UnsupportedAlgorithm(_))),
+            "AES-256-CBC direct key should be rejected"
+        );
+    }
+
+    /// Test 8: AES-256-CBC passphrase mode should work (64-byte key via KDF).
+    /// 测试 8：AES-256-CBC 口令模式应能工作（通过 KDF 生成 64 字节密钥）。
+    #[test]
+    fn test_aes_cbc_passphrase_mode() {
+        let plaintext = b"AES-CBC with passphrase mode";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "cbc-passphrase", Algorithm::Aes256Cbc,
+            Kdf::Pbkdf2HmacSha256, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        let decrypted = decrypt_with_passphrase(&dst, "cbc-passphrase")
+            .expect("decrypt should succeed");
+
+        assert_eq!(decrypted, plaintext);
     }
 }

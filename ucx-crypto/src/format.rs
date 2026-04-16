@@ -41,6 +41,13 @@ pub struct UcxeHeader {
     /// Key derivation function used for this file.
     /// 此文件使用的密钥派生函数。
     pub kdf: Kdf,
+
+    /// Whether the ciphertext uses chunked encryption.
+    /// Stored in the reserved byte: 0x00 = normal, 0x01 = chunked.
+    ///
+    /// 密文是否使用了分块加密。
+    /// 存储在保留字节中：0x00 = 普通模式，0x01 = 分块模式。
+    pub chunked: bool,
 }
 
 /// Key derivation function parameters stored in the UCXE file.
@@ -156,11 +163,14 @@ pub fn write_ucxe(writer: &mut impl Write, file: &UcxeFile) -> Result<(), Crypto
 
     // Step 2: Write header bytes — version, algorithm ID, KDF ID, reserved.
     // 第 2 步：写入头部字节 —— 版本、算法 ID、KDF ID、保留位。
+    // Reserved byte bit 0: chunked flag (0x00 = normal, 0x01 = chunked).
+    // 保留字节 bit 0：分块标记（0x00 = 普通，0x01 = 分块）。
+    let reserved = if file.header.chunked { 0x01 } else { 0x00 };
     writer.write_all(&[
         file.header.format_version,
         file.header.algorithm.to_u8(),
         file.header.kdf.to_u8(),
-        0x00, // Reserved byte / 保留字节
+        reserved,
     ])?;
 
     // Step 3: Write KDF parameters (if KDF is not None).
@@ -246,7 +256,9 @@ pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
     let version = header_bytes[0];
     let algo_id = header_bytes[1];
     let kdf_id = header_bytes[2];
-    // header_bytes[3] is reserved / header_bytes[3] 为保留位
+    // Reserved byte bit 0: chunked flag (0x00 = normal, 0x01 = chunked).
+    // 保留字节 bit 0：分块标记（0x00 = 普通，0x01 = 分块）。
+    let chunked = (header_bytes[3] & 0x01) != 0;
 
     // Step 3: Validate format version.
     // 第 3 步：验证格式版本。
@@ -329,6 +341,7 @@ pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
             format_version: version,
             algorithm,
             kdf,
+            chunked,
         },
         kdf_params,
         salt,
@@ -382,6 +395,7 @@ mod tests {
                 format_version: UCXE_FORMAT_VERSION,
                 algorithm,
                 kdf,
+                chunked: false,
             },
             kdf_params,
             salt: vec![0xAA; 16],
@@ -397,6 +411,7 @@ mod tests {
         assert_eq!(a.header.format_version, b.header.format_version);
         assert_eq!(a.header.algorithm, b.header.algorithm);
         assert_eq!(a.header.kdf, b.header.kdf);
+        assert_eq!(a.header.chunked, b.header.chunked);
         assert_eq!(a.salt, b.salt);
         assert_eq!(a.iv, b.iv);
         assert_eq!(a.ciphertext, b.ciphertext);
@@ -578,6 +593,7 @@ mod tests {
                 format_version: UCXE_FORMAT_VERSION,
                 algorithm: Algorithm::Aes256Gcm,
                 kdf: Kdf::None,
+                chunked: false,
             },
             kdf_params: KdfParams::None,
             salt: vec![],
@@ -604,6 +620,7 @@ mod tests {
                 format_version: UCXE_FORMAT_VERSION,
                 algorithm: Algorithm::ChaCha20Poly1305,
                 kdf: Kdf::None,
+                chunked: false,
             },
             kdf_params: KdfParams::None,
             salt: vec![0xAA; 32],
