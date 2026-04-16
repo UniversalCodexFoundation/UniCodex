@@ -32,10 +32,17 @@ pub mod format;
 /// AES-256-GCM 加密引擎。
 pub mod aes_gcm;
 
-// 后续步骤会添加更多模块：
-// pub mod kdf;       // 密钥派生
-// pub mod cipher;    // 加密/解密实现
-// pub mod chunk;     // 大文件分块加密
+/// ChaCha20-Poly1305 encryption engine.
+/// ChaCha20-Poly1305 加密引擎。
+pub mod chacha20;
+
+/// AES-256-CBC with HMAC-SHA256 (Encrypt-then-MAC) engine.
+/// AES-256-CBC + HMAC-SHA256（Encrypt-then-MAC）加密引擎。
+pub mod aes_cbc;
+
+/// Key derivation functions (Argon2id / PBKDF2).
+/// 密钥派生函数（Argon2id / PBKDF2）。
+pub mod kdf;
 
 // =============================================================================
 // Constants / 常量

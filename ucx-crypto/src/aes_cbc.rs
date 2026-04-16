@@ -18,7 +18,7 @@
 //!   HMAC 比较使用常量时间比较，防止时序攻击。
 
 use aes::Aes256;
-use cbc::cipher::{BlockEncryptMut, BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+use cbc::cipher::{BlockModeEncrypt, BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
@@ -79,13 +79,17 @@ pub const KEY_SIZE: usize = 32;
 ///
 /// # Returns / 返回
 ///
+/// Result type for encrypt: (ciphertext, iv, hmac_tag).
+/// encrypt 的返回类型：(密文, iv, hmac_tag)。
+pub type EncryptResult = (Vec<u8>, [u8; 16], [u8; 32]);
+
 /// A tuple of `(ciphertext, iv, hmac_tag)` on success.
 /// 成功时返回 `(密文, iv, hmac_tag)` 元组。
 pub fn encrypt(
     enc_key: &[u8; 32],
     mac_key: &[u8; 32],
     plaintext: &[u8],
-) -> Result<(Vec<u8>, [u8; 16], [u8; 32]), CryptoError> {
+) -> Result<EncryptResult, CryptoError> {
     // 1. Generate a random 16-byte IV using CSPRNG.
     //    使用 CSPRNG 生成随机 16 字节 IV。
     let mut iv = [0u8; IV_SIZE];
