@@ -253,4 +253,59 @@ mod tests {
         let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag).unwrap();
         assert!(decrypted.is_empty());
     }
+
+    /// Tampered ciphertext (not HMAC) should be detected by HMAC verification.
+    /// 篡改密文（非 HMAC）应被 HMAC 验证检测到。
+    #[test]
+    fn tampered_ciphertext() {
+        let enc_key = [0x42u8; 32];
+        let mac_key = [0x43u8; 32];
+        let plaintext = b"ciphertext tamper test";
+
+        let (mut ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+
+        // Flip one bit in the ciphertext body (not the HMAC tag).
+        // 翻转密文主体中的一个比特（不是 HMAC 标签）。
+        ciphertext[0] ^= 0x01;
+
+        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag);
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::AuthenticationFailed
+        ));
+    }
+
+    /// Decryption with a wrong MAC key should fail with AuthenticationFailed.
+    /// 使用错误的 MAC 密钥解密应返回 AuthenticationFailed 错误。
+    #[test]
+    fn wrong_mac_key() {
+        let enc_key = [0x42u8; 32];
+        let mac_key = [0x43u8; 32];
+        let wrong_mac_key = [0x99u8; 32];
+        let plaintext = b"mac key test data";
+
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+
+        // Decrypt with incorrect mac_key — HMAC verification should fail.
+        // 使用错误的 mac_key 解密 —— HMAC 验证应失败。
+        let result = decrypt(&enc_key, &wrong_mac_key, &iv, &ciphertext, &hmac_tag);
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::AuthenticationFailed
+        ));
+    }
+
+    /// Large plaintext (1 MB) should encrypt and decrypt successfully.
+    /// 大明文（1 MB）应能正常加密和解密。
+    #[test]
+    fn large_plaintext() {
+        let enc_key = [0x42u8; 32];
+        let mac_key = [0x43u8; 32];
+        let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
+
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, &plaintext).unwrap();
+        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag).unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
 }

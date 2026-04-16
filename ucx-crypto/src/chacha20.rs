@@ -199,4 +199,52 @@ mod tests {
         let decrypted = decrypt(&key, &nonce, &ciphertext, &tag).unwrap();
         assert!(decrypted.is_empty());
     }
+
+    /// Tampered tag should fail authentication.
+    /// 篡改 tag 应导致认证失败。
+    #[test]
+    fn tampered_tag() {
+        let key = [0x42u8; 32];
+        let plaintext = b"tag integrity check";
+
+        let (ciphertext, nonce, mut tag) = encrypt(&key, plaintext).unwrap();
+
+        // Flip one bit in the tag.
+        // 翻转 tag 中的一个比特。
+        tag[0] ^= 0x01;
+
+        let result = decrypt(&key, &nonce, &ciphertext, &tag);
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::AuthenticationFailed
+        ));
+    }
+
+    /// Two encryptions of the same plaintext should produce different nonces.
+    /// 对同一明文的两次加密应产生不同的 nonce。
+    #[test]
+    fn nonce_uniqueness() {
+        let key = [0x42u8; 32];
+        let plaintext = b"nonce uniqueness test";
+
+        let (_, nonce1, _) = encrypt(&key, plaintext).unwrap();
+        let (_, nonce2, _) = encrypt(&key, plaintext).unwrap();
+
+        // Nonces should be different (collision probability is negligible).
+        // Nonce 应不同（碰撞概率可忽略不计）。
+        assert_ne!(nonce1, nonce2);
+    }
+
+    /// Large plaintext (1 MB) should encrypt and decrypt successfully.
+    /// 大明文（1 MB）应能正常加密和解密。
+    #[test]
+    fn large_plaintext() {
+        let key = [0x42u8; 32];
+        let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
+
+        let (ciphertext, nonce, tag) = encrypt(&key, &plaintext).unwrap();
+        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag).unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
 }
