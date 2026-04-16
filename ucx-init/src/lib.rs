@@ -212,9 +212,9 @@ impl Default for InitOptions {
 /// # Arguments / 参数
 ///
 /// * `path` - The directory where the project will be created.
-///            项目将创建在此目录中。
+///   项目将创建在此目录中。
 /// * `options` - Project metadata options (title, author, language).
-///              项目元数据选项（标题、作者、语言）。
+///   项目元数据选项（标题、作者、语言）。
 ///
 /// # Returns / 返回
 ///
@@ -468,13 +468,12 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let entry_path = entry.path();
-            if entry_path.is_file() {
-                if let Some(ext) = entry_path.extension() {
-                    if ext == "md" {
-                        let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
-                        md_files.push(file_name);
-                    }
-                }
+            if entry_path.is_file()
+                && let Some(ext) = entry_path.extension()
+                && ext == "md"
+            {
+                let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                md_files.push(file_name);
             }
         }
     }
@@ -486,13 +485,12 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
     if let Ok(entries) = fs::read_dir(&content_dir) {
         for entry in entries.flatten() {
             let entry_path = entry.path();
-            if entry_path.is_file() {
-                if let Some(ext) = entry_path.extension() {
-                    if ext == "md" {
-                        let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
-                        content_md_files.push(file_name);
-                    }
-                }
+            if entry_path.is_file()
+                && let Some(ext) = entry_path.extension()
+                && ext == "md"
+            {
+                let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                content_md_files.push(file_name);
             }
         }
     }

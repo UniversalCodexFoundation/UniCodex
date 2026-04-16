@@ -1931,6 +1931,7 @@ dependencies = [
  "thiserror",
  "toml",
  "tracing",
+ "ucx-crypto",
  "ucx-types",
  "ucx-version",
  "walkdir",
@@ -1986,6 +1987,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "ucx-crypto",
  "ucx-types",
  "zip",
 ]
@@ -2086,6 +2088,7 @@ name = "unicodex-core"
 version = "0.3.0-alpha.1"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "clap",
  "serde_json",

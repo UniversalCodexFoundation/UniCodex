@@ -103,7 +103,7 @@ fn collect_dir_recursive(
     // 使用 walkdir 进行可靠的递归遍历。
     for entry in walkdir::WalkDir::new(dir).sort_by_file_name() {
         let entry = entry.map_err(|e| {
-            BuildError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            BuildError::Io(std::io::Error::other(e.to_string()))
         })?;
 
         // Skip directories — only collect regular files.
@@ -353,19 +353,19 @@ pub fn create_ucx_archive(
     // 条目 2：META-INF/MANIFEST.MF — DEFLATE。
     let options_deflate: FileOptions<'_, ()> = FileOptions::default()
         .compression_method(CompressionMethod::Deflated);
-    zip.start_file("META-INF/MANIFEST.MF", options_deflate.clone())
+    zip.start_file("META-INF/MANIFEST.MF", options_deflate)
         .map_err(|e| BuildError::Zip(e.to_string()))?;
     zip.write_all(manifest_str.as_bytes())?;
 
     // Entry 3: metadata/codex.json — DEFLATE.
     // 条目 3：metadata/codex.json — DEFLATE。
-    zip.start_file("metadata/codex.json", options_deflate.clone())
+    zip.start_file("metadata/codex.json", options_deflate)
         .map_err(|e| BuildError::Zip(e.to_string()))?;
     zip.write_all(codex_json.as_bytes())?;
 
     // Entry 4: content/struct.json — DEFLATE.
     // 条目 4：content/struct.json — DEFLATE。
-    zip.start_file("content/struct.json", options_deflate.clone())
+    zip.start_file("content/struct.json", options_deflate)
         .map_err(|e| BuildError::Zip(e.to_string()))?;
     zip.write_all(struct_json.as_bytes())?;
 

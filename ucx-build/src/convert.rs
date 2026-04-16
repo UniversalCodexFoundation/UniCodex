@@ -188,9 +188,9 @@ pub fn config_to_codex(config: &ProjectConfig) -> Codex {
 /// # Arguments / 参数
 ///
 /// * `config` - The project configuration from `unicodex.toml`.
-///              来自 `unicodex.toml` 的项目配置。
+///   来自 `unicodex.toml` 的项目配置。
 /// * `file_version` - The file version to inject into `codex.json`.
-///                     要注入到 `codex.json` 中的文件版本。
+///   要注入到 `codex.json` 中的文件版本。
 pub fn config_to_codex_with_version(
     config: &ProjectConfig,
     file_version: Option<FileVersion>,

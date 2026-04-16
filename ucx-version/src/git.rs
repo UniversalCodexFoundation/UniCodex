@@ -30,7 +30,7 @@ use crate::{ChangeSet, UcxVersion, VersionError};
 /// # Arguments / 参数
 ///
 /// * `project_path` - Path to the project root (must contain a `.git` directory).
-///                    项目根目录路径（必须包含 `.git` 目录）。
+///   项目根目录路径（必须包含 `.git` 目录）。
 pub fn detect_changes_git(
     project_path: &Path,
 ) -> Result<(UcxVersion, ChangeSet), VersionError> {
@@ -139,10 +139,10 @@ fn find_latest_ucx_tag(repo: &Repository) -> Result<(String, git2::Oid), Version
             // Strip the "refs/tags/" prefix to get the tag name.
             // 去除 "refs/tags/" 前缀以获取标签名。
             let short_name = name.strip_prefix("refs/tags/").unwrap_or(name);
-            if short_name.starts_with("ucx-v") {
-                if let Ok(version) = parse_tag_version(short_name) {
-                    tags.push((short_name.to_string(), oid, version));
-                }
+            if short_name.starts_with("ucx-v")
+                && let Ok(version) = parse_tag_version(short_name)
+            {
+                tags.push((short_name.to_string(), oid, version));
             }
         }
         true // continue iteration / 继续遍历

@@ -944,7 +944,7 @@ fn save_version_state_file(
 ) -> Result<(), std::io::Error> {
     let path = project_path.join(VERSION_STATE_FILE);
     let json = serde_json::to_string_pretty(fv)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     fs::write(&path, json)
 }
 

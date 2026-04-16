@@ -214,7 +214,7 @@ pub enum ChangeKind {
 /// # Arguments / 参数
 ///
 /// * `project_path` - Path to the project root.
-///                    项目根目录路径。
+///   项目根目录路径。
 ///
 /// # Returns / 返回
 ///
@@ -283,11 +283,11 @@ fn detect_changes_snapshot(
 /// # Arguments / 参数
 ///
 /// * `current`     - The current version.
-///                   当前版本。
+///   当前版本。
 /// * `changes`     - The detected changes.
-///                   检测到的变更。
+///   检测到的变更。
 /// * `project_path` - Path to the project root (for reading struct.json).
-///                    项目根目录路径（用于读取 struct.json）。
+///   项目根目录路径（用于读取 struct.json）。
 ///
 /// # Returns / 返回
 ///
