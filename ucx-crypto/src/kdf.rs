@@ -10,6 +10,7 @@
 //! - PBKDF2-HMAC-SHA256：广泛兼容的备选方案
 
 use crate::CryptoError;
+use zeroize::Zeroizing;
 
 // =============================================================================
 // Default Parameters / 默认参数
@@ -225,7 +226,7 @@ pub fn derive_key(
     kdf: crate::Kdf,
     kdf_params: &crate::format::KdfParams,
     output_len: usize,
-) -> Result<Vec<u8>, CryptoError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     match kdf {
         // Kdf::None means the key is provided directly — no derivation needed.
         // Kdf::None 表示密钥直接提供 —— 不需要派生。
@@ -266,7 +267,8 @@ pub fn derive_key(
                 params,
             );
 
-            let mut output = vec![0u8; output_len];
+            // Zeroizing 包装确保密钥材料在 drop 时被安全清零。
+            let mut output = Zeroizing::new(vec![0u8; output_len]);
             argon2
                 .hash_password_into(passphrase, salt, &mut output)
                 .map_err(|e| CryptoError::KeyDerivation(format!("Argon2id hash error: {e}")))?;
@@ -294,7 +296,8 @@ pub fn derive_key(
                 ));
             }
 
-            let mut output = vec![0u8; output_len];
+            // Zeroizing 包装确保密钥材料在 drop 时被安全清零。
+            let mut output = Zeroizing::new(vec![0u8; output_len]);
             pbkdf2::pbkdf2_hmac::<sha2::Sha256>(passphrase, salt, *iterations, &mut output);
 
             Ok(output)
