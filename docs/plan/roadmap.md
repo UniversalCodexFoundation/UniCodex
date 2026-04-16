@@ -80,7 +80,7 @@
 │      ├── 无签名时明确提示                                      │
 │      └── --verbose 详细输出                                    │
 │                                                                 │
-│  Phase 4 ─ 加密体系（Encryption）                   📋 规划中   │
+│  Phase 4 ─ 加密体系（Encryption）                   ✅ 已完成   │
 │  └── ucx-crypto：加密模块                                      │
 │      ├── AES-256-GCM / ChaCha20-Poly1305 章节加密              │
 │      ├── UCXE 二进制格式处理                                   │
@@ -118,7 +118,7 @@
 
 ```
 Phase 0 ──→ Phase 1 ──→ Phase 2 ──┬──→ Phase 3 ──→ Phase 4
-  ✅           ✅         ✅       │       ✅           📋
+  ✅           ✅         ✅       │       ✅           ✅
                                    │
                                    └──→ Phase 5（Phase 3 完成后可启动）
                                             📋
@@ -144,7 +144,7 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──┬──→ Phase 3 ──→
 | Phase 1 | **已完成** | v0.1.0-alpha.2 | init/build/parse + CLI + 75 tests |
 | Phase 2 | **已完成** | v0.2.0-alpha.1 | 版本管理 + CLI 增强 + 122 tests |
 | Phase 3 | **已完成** | v0.3.0-alpha.1 | 双层签名 + 证书管理 + 完整验证 |
-| Phase 4 | 规划中 | — | 规范 04-crypto-spec.md 已就绪 |
+| Phase 4 | **已完成** | v0.4.0-alpha.1 | ucx-crypto 加密模块 + CLI 命令 + 构建/解析集成 |
 | Phase 5 | 规划中 | — | 规范 08/09 已就绪 |
 | 区块链 | 远期计划 | — | 规范 06-blockchain-ext.md 已就绪 |
 

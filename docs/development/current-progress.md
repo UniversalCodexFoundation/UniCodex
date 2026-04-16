@@ -255,4 +255,40 @@
 
 ---
 
+### 2026-04-16 — Phase 4 完成：加密体系（v0.4.0-alpha.1）
+
+**完成事项**：
+
+1. **ucx-crypto 核心模块完整实现**（从 placeholder 到生产代码）
+   - `algorithm.rs`：AES-256-GCM / ChaCha20-Poly1305 / AES-256-CBC 三种对称加密算法
+   - `kdf.rs`：密钥派生 — Argon2id（推荐）/ PBKDF2-HMAC-SHA256
+   - `ucxe.rs`：UCXE 二进制格式 — magic "UCXE" + 算法/KDF 参数 + 密文 + Auth Tag
+   - `chapter.rs`：章节级加密 — 完整文件加密为 UCXE 格式
+   - `paragraph.rs`：段落级加密 — Base64 编码嵌入 `<encrypted>` 标签
+   - `chunked.rs`：大文件分块加密 — >64 MiB 文件按 1 MiB 分块，nonce 派生
+
+2. **CLI 新增命令**
+   - `ucx encrypt` — 文件加密（直接密钥 + 口令模式）
+   - `ucx decrypt` — 文件解密（直接密钥 + 口令模式）
+
+3. **构建/解析集成**
+   - ManifestEntry 支持 `Encrypted` / `Original-Size` 字段
+   - ucx-build / ucx-parse 加密元数据完整支持
+
+**测试汇总**：218+ tests（全部通过）
+- ucx-crypto: 58 tests（新增）
+- workspace 总计: 218+ tests
+- clippy 零警告
+
+**关键技术决策**：
+- AES-256-GCM 作为默认推荐算法，ChaCha20-Poly1305 作为替代（无硬件 AES-NI 场景）
+- AES-256-CBC（Encrypt-then-MAC）保留为兼容选项
+- Argon2id 作为推荐 KDF（抗 GPU/ASIC），PBKDF2 作为兼容回退
+- 大文件分块阈值 64 MiB，块大小 1 MiB，nonce 从主 nonce 派生
+
+**下一步**：
+- Phase 5：生态建设（多语言 SDK + 官方服务）
+
+---
+
 *后续开发进度将追加在此文档中*

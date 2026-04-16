@@ -40,7 +40,7 @@ members = [
 # 所有工作区成员通过 `field.workspace = true` 继承这些值。
 # =============================================================================
 [workspace.package]
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/unicodex/unicodex"

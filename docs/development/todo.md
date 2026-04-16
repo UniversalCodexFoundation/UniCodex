@@ -1,8 +1,8 @@
 # Unicodex 后续开发待办事项
 
-> 来源：v0.1.0-alpha.1 / v0.1.0-alpha.2 / v0.2.0-alpha.1 / v0.3.0-alpha.1 测试报告
-> 更新时间：2026-04-15
-> 状态说明：Phase 3（签名与验证）已在 v0.3.0-alpha.1 中完成，所有已知 bug 已修复
+> 来源：v0.1.0-alpha.1 / v0.1.0-alpha.2 / v0.2.0-alpha.1 / v0.3.0-alpha.1 / v0.4.0-alpha.1 测试报告
+> 更新时间：2026-04-16
+> 状态说明：Phase 4（加密体系）已在 v0.4.0-alpha.1 中完成
 
 ---
 
@@ -33,10 +33,6 @@
 
 ---
 
-## 仍待开发项
-
-暂无遗留问题。所有已知 bug 均已在 v0.3.0-alpha.1 第二轮测试后修复。
-
 ---
 
 ## Phase 3 扩展计划（签名体系增强）
@@ -53,22 +49,24 @@
 
 ---
 
-## Phase 4 计划 — 加密体系（Encryption）
+## Phase 4 完成项（v0.4.0-alpha.1）
 
-目标版本：v0.4.0-alpha.x / v0.4.0-beta.x
+| 编号 | 功能 | 描述 | 状态 |
+|------|------|------|------|
+| CRYPTO-001 | ucx-crypto 核心模块 | 实现 AES-256-GCM / ChaCha20-Poly1305 / AES-256-CBC 对称加密引擎 | ✅ 已完成 |
+| CRYPTO-002 | UCXE 二进制格式 | 加密后的 UCX 文件格式（.ucxe），包含加密头和密文段 | ✅ 已完成 |
+| CRYPTO-003 | 密钥派生 | Argon2id / PBKDF2 从用户口令派生加密密钥 | ✅ 已完成 |
+| CRYPTO-004 | 章节级加密 | 按章节独立加密，完整文件加密为 UCXE 格式 | ✅ 已完成 |
+| CRYPTO-005 | 段落级加密 | Base64 编码嵌入 `<encrypted>` 标签 | ✅ 已完成 |
+| CRYPTO-006 | 大文件分块加密 | >64 MiB 文件按 1 MiB 分块，nonce 派生 | ✅ 已完成 |
+| CRYPTO-007 | `ucx encrypt` CLI | CLI 加密命令，支持直接密钥 + 口令模式 | ✅ 已完成 |
+| CRYPTO-008 | `ucx decrypt` CLI | CLI 解密命令，支持直接密钥 + 口令模式 | ✅ 已完成 |
 
-规范依据：`docs/04-crypto-spec.md`
+---
 
-| 编号 | 功能 | 描述 |
-|------|------|------|
-| CRYPTO-001 | ucx-crypto 核心模块 | 实现 AES-256-GCM / ChaCha20-Poly1305 对称加密引擎 |
-| CRYPTO-002 | UCXE 二进制格式 | 加密后的 UCX 文件格式（.ucxe），包含加密头和密文段 |
-| CRYPTO-003 | 密钥派生 | Argon2id / PBKDF2 从用户口令派生加密密钥 |
-| CRYPTO-004 | 章节级加密 | 按章节独立加密，允许部分章节免费阅读 |
-| CRYPTO-005 | 段落级加密 | 更细粒度的加密控制（试读段落） |
-| CRYPTO-006 | 多密钥获取方式 | 支持 direct / message / url / service 四种密钥获取途径 |
-| CRYPTO-007 | `ucx encrypt` CLI | CLI 加密命令，支持指定加密范围和算法 |
-| CRYPTO-008 | `ucx decrypt` CLI | CLI 解密命令，支持多种密钥输入方式 |
+## 仍待开发项
+
+暂无遗留问题。所有已知 bug 均已在 v0.4.0-alpha.1 中修复。
 
 ---
 
@@ -106,4 +104,4 @@
 
 ---
 
-*本文件于 v0.3.0-alpha.1 Phase 3 全部 bug 修复后更新（2026-04-15）。*
+*本文件于 v0.4.0-alpha.1 Phase 4 完成后更新（2026-04-16）。*
