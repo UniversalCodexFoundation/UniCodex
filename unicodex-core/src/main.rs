@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use base64::Engine as _;
 use clap::{Parser, Subcommand};
 
 // =============================================================================
@@ -233,22 +234,60 @@ enum Commands {
         path: PathBuf,
     },
 
-    /// Encrypt chapters or resources.
-    /// 加密章节或资源。
+    /// Encrypt a file using the specified algorithm.
+    /// 加密文件。
     Encrypt {
-        /// Arguments placeholder (command not yet implemented).
-        /// 参数占位（命令尚未实现）。
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
+        /// Path to the file to encrypt.
+        /// 要加密的文件路径。
+        file: PathBuf,
+
+        /// Output path for the encrypted file (default: overwrite source).
+        /// 加密输出路径（默认：覆盖源文件）。
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Encryption algorithm.
+        /// 加密算法。
+        #[arg(short, long, default_value = "AES-256-GCM")]
+        algorithm: String,
+
+        /// Base64-encoded 32-byte encryption key (direct key mode).
+        /// Base64 编码的 32 字节加密密钥（直接密钥模式）。
+        #[arg(short, long, conflicts_with = "passphrase")]
+        key: Option<String>,
+
+        /// Use passphrase-based encryption (interactive prompt).
+        /// 使用口令加密（交互式输入）。
+        #[arg(short, long, conflicts_with = "key")]
+        passphrase: bool,
+
+        /// KDF algorithm for passphrase mode.
+        /// 口令模式的 KDF 算法。
+        #[arg(long, default_value = "argon2id")]
+        kdf: String,
     },
 
-    /// Decrypt chapters or resources.
-    /// 解密章节或资源。
+    /// Decrypt a UCXE encrypted file.
+    /// 解密 UCXE 加密文件。
     Decrypt {
-        /// Arguments placeholder (command not yet implemented).
-        /// 参数占位（命令尚未实现）。
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        _args: Vec<String>,
+        /// Path to the encrypted file.
+        /// 加密文件路径。
+        file: PathBuf,
+
+        /// Output path for the decrypted file (default: overwrite source).
+        /// 解密输出路径（默认：覆盖源文件）。
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Base64-encoded encryption key (direct key mode).
+        /// Base64 编码的加密密钥（直接密钥模式）。
+        #[arg(short, long, conflicts_with = "passphrase")]
+        key: Option<String>,
+
+        /// Use passphrase-based decryption (interactive prompt).
+        /// 使用口令解密（交互式输入）。
+        #[arg(short, long, conflicts_with = "key")]
+        passphrase: bool,
     },
 }
 
@@ -466,8 +505,8 @@ fn main() -> anyhow::Result<()> {
                     ..Default::default()
                 },
             );
-            if let Ok(ref out_path) = expected_output {
-                if out_path.exists() && !force {
+            if let Ok(ref out_path) = expected_output
+                && out_path.exists() && !force {
                     eprintln!("Warning: output file already exists: {}", out_path.display());
                     eprint!("Overwrite? [y/N] ");
                     let mut input = String::new();
@@ -479,7 +518,6 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-            }
 
             let options = ucx_build::BuildOptions {
                 output_dir,
@@ -593,12 +631,11 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Description / 简介
-            if let Some(ref desc) = codex.description {
-                if let Some(ref short) = desc.short {
+            if let Some(ref desc) = codex.description
+                && let Some(ref short) = desc.short {
                     println!();
                     println!("Description: {short}");
                 }
-            }
 
             // Structure / 结构
             let structure = archive.structure();
@@ -894,11 +931,77 @@ fn main() -> anyhow::Result<()> {
         Commands::Version { action, path } => {
             handle_version_command(action, &path)?;
         }
-        Commands::Encrypt { .. } => {
-            println!("ucx encrypt: not yet implemented (planned for Phase 4)");
+        Commands::Encrypt { file, output, algorithm, key, passphrase, kdf } => {
+            // 解析加密算法 / Parse the encryption algorithm.
+            let algo = match algorithm.as_str() {
+                "AES-256-GCM" | "aes-256-gcm" => ucx_crypto::Algorithm::Aes256Gcm,
+                "ChaCha20-Poly1305" | "chacha20-poly1305" => ucx_crypto::Algorithm::ChaCha20Poly1305,
+                "AES-256-CBC" | "aes-256-cbc" => ucx_crypto::Algorithm::Aes256Cbc,
+                _ => anyhow::bail!("unsupported algorithm: {algorithm}"),
+            };
+
+            // 确定输出路径（默认覆盖源文件） / Determine output path (default: overwrite source).
+            let dest = output.as_ref().unwrap_or(&file);
+
+            if passphrase {
+                // 口令模式：解析 KDF 并交互式读取口令
+                // Passphrase mode: parse KDF and interactively read the passphrase.
+                let kdf_type = match kdf.as_str() {
+                    "argon2id" | "Argon2id" => ucx_crypto::Kdf::Argon2id,
+                    "pbkdf2" | "PBKDF2" => ucx_crypto::Kdf::Pbkdf2HmacSha256,
+                    _ => anyhow::bail!("unsupported KDF: {kdf}"),
+                };
+                eprint!("Enter passphrase: ");
+                let pass = read_passphrase()?;
+                ucx_crypto::encrypt_with_passphrase(&file, dest, &pass, algo, kdf_type)?;
+                println!("File encrypted: {}", dest.display());
+                println!("  Algorithm: {algorithm}");
+                println!("  KDF: {kdf}");
+            } else if let Some(key_b64) = key {
+                // 直接密钥模式：解码 Base64 密钥
+                // Direct key mode: decode the Base64 key.
+                let key_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&key_b64)
+                    .map_err(|e| anyhow::anyhow!("invalid Base64 key: {e}"))?;
+                if key_bytes.len() != 32 {
+                    anyhow::bail!("key must be 32 bytes, got {}", key_bytes.len());
+                }
+                let key_arr: [u8; 32] = key_bytes.try_into().unwrap();
+                ucx_crypto::encrypt(&file, dest, &key_arr, algo)?;
+                println!("File encrypted: {}", dest.display());
+                println!("  Algorithm: {algorithm}");
+            } else {
+                anyhow::bail!("must specify --key or --passphrase");
+            }
         }
-        Commands::Decrypt { .. } => {
-            println!("ucx decrypt: not yet implemented (planned for Phase 4)");
+        Commands::Decrypt { file, output, key, passphrase } => {
+            // 确定输出路径（默认覆盖源文件） / Determine output path (default: overwrite source).
+            let dest = output.as_ref().unwrap_or(&file);
+
+            let plaintext = if passphrase {
+                // 口令模式：交互式读取口令并解密
+                // Passphrase mode: interactively read passphrase and decrypt.
+                eprint!("Enter passphrase: ");
+                let pass = read_passphrase()?;
+                ucx_crypto::decrypt_with_passphrase(&file, &pass)?
+            } else if let Some(key_b64) = key {
+                // 直接密钥模式：解码 Base64 密钥并解密
+                // Direct key mode: decode Base64 key and decrypt.
+                let key_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&key_b64)
+                    .map_err(|e| anyhow::anyhow!("invalid Base64 key: {e}"))?;
+                if key_bytes.len() != 32 {
+                    anyhow::bail!("key must be 32 bytes, got {}", key_bytes.len());
+                }
+                let key_arr: [u8; 32] = key_bytes.try_into().unwrap();
+                ucx_crypto::decrypt(&file, &key_arr)?
+            } else {
+                anyhow::bail!("must specify --key or --passphrase");
+            };
+
+            std::fs::write(dest, &plaintext)?;
+            println!("File decrypted: {}", dest.display());
+            println!("  Size: {} bytes", plaintext.len());
         }
     }
 
@@ -908,6 +1011,19 @@ fn main() -> anyhow::Result<()> {
 // =============================================================================
 // Helper functions / 辅助函数
 // =============================================================================
+
+/// Read a passphrase from stdin (no echo if terminal).
+///
+/// 从标准输入读取口令（如果是终端则不回显）。
+fn read_passphrase() -> anyhow::Result<String> {
+    let mut pass = String::new();
+    std::io::stdin().read_line(&mut pass)?;
+    let pass = pass.trim_end().to_string();
+    if pass.is_empty() {
+        anyhow::bail!("passphrase cannot be empty");
+    }
+    Ok(pass)
+}
 
 /// Prompt the user for input with a default value shown in brackets.
 ///
@@ -1106,7 +1222,7 @@ fn handle_version_command(
             let current = state
                 .as_ref()
                 .and_then(|fv| fv.version.as_deref())
-                .map(|v| ucx_version::UcxVersion::parse(v))
+                .map(ucx_version::UcxVersion::parse)
                 .transpose()?
                 .unwrap_or_else(ucx_version::UcxVersion::zero);
 
@@ -1123,7 +1239,7 @@ fn handle_version_command(
             let current = state
                 .as_ref()
                 .and_then(|fv| fv.version.as_deref())
-                .map(|v| ucx_version::UcxVersion::parse(v))
+                .map(ucx_version::UcxVersion::parse)
                 .transpose()?
                 .unwrap_or_else(ucx_version::UcxVersion::zero);
 
@@ -1152,7 +1268,7 @@ fn handle_version_command(
             let current = state
                 .as_ref()
                 .and_then(|fv| fv.version.as_deref())
-                .map(|v| ucx_version::UcxVersion::parse(v))
+                .map(ucx_version::UcxVersion::parse)
                 .transpose()?
                 .unwrap_or_else(ucx_version::UcxVersion::zero);
 
