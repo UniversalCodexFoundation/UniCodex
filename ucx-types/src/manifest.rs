@@ -175,6 +175,14 @@ impl Manifest {
             output.push_str(&format!("Name: {}\n", entry.name));
             output.push_str(&format!("Size: {}\n", entry.size));
             output.push_str(&format!("{digest_header}: {}\n", entry.digest));
+            // Encrypted flag (only when true). / 加密标志（仅在为 true 时输出）。
+            if entry.encrypted == Some(true) {
+                output.push_str("Encrypted: true\n");
+            }
+            // Original plaintext size (only when encrypted). / 原始明文大小（仅在加密时输出）。
+            if let Some(orig) = entry.original_size {
+                output.push_str(&format!("Original-Size: {orig}\n"));
+            }
         }
 
         output
@@ -236,6 +244,8 @@ impl Manifest {
             let mut name = None;
             let mut size = None;
             let mut digest = None;
+            let mut encrypted = None;
+            let mut original_size = None;
 
             for line in section.lines() {
                 let line = line.trim();
@@ -250,6 +260,18 @@ impl Manifest {
                                 ManifestError::InvalidField(format!("Size: {e}"))
                             })?);
                         }
+                        "Encrypted" => {
+                            // Parse boolean "true"/"false".
+                            // 解析布尔值 "true"/"false"。
+                            encrypted = Some(value == "true");
+                        }
+                        "Original-Size" => {
+                            // Parse original plaintext size.
+                            // 解析原始明文大小。
+                            original_size = Some(value.parse::<u64>().map_err(|e| {
+                                ManifestError::InvalidField(format!("Original-Size: {e}"))
+                            })?);
+                        }
                         k if k == digest_header => digest = Some(value.to_string()),
                         _ => {} // Ignore unknown headers / 忽略未知头
                     }
@@ -261,6 +283,8 @@ impl Manifest {
                     name,
                     size,
                     digest,
+                    encrypted,
+                    original_size,
                 });
             }
         }
@@ -295,6 +319,16 @@ pub struct ManifestEntry {
     /// Hash digest (hex-encoded or Base64-encoded depending on context).
     /// 哈希摘要（十六进制或 Base64 编码，取决于上下文）。
     pub digest: String,
+
+    /// Whether this file is encrypted (UCXE format).
+    /// 此文件是否已加密（UCXE 格式）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<bool>,
+
+    /// Original plaintext size in bytes (only when encrypted).
+    /// 原始明文大小（仅在加密时有值）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_size: Option<u64>,
 }
 
 impl ManifestEntry {
@@ -311,6 +345,8 @@ impl ManifestEntry {
             name,
             size,
             digest: BASE64_STANDARD.encode(hash_bytes),
+            encrypted: None,
+            original_size: None,
         }
     }
 }
@@ -403,11 +439,15 @@ mod tests {
             name: "metadata/codex.json".to_string(),
             size: 2048,
             digest: "af1349b9f5f9a1a6".to_string(),
+            encrypted: None,
+            original_size: None,
         });
         manifest.add_entry(ManifestEntry {
             name: "content/struct.json".to_string(),
             size: 512,
             digest: "7d865e959b246691".to_string(),
+            encrypted: None,
+            original_size: None,
         });
 
         let text = manifest.to_manifest_string();
@@ -456,6 +496,8 @@ mod tests {
             name: "metadata/codex.json".to_string(),
             size: 1024,
             digest: "abcdef1234567890".to_string(),
+            encrypted: None,
+            original_size: None,
         });
 
         let text = original.to_manifest_string();
@@ -490,5 +532,96 @@ mod tests {
         let text = "UCX-Version: 1.0\nHash-Algorithm: BLAKE3\n";
         let result = Manifest::from_manifest_str(text);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_manifest_encrypted_entry() {
+        // Serialization of encrypted entries should include Encrypted and Original-Size.
+        // 加密条目的序列化应包含 Encrypted 和 Original-Size。
+        let mut manifest = Manifest::new("1.0", HashAlgorithm::Blake3);
+        manifest.created_by = Some("test-tool 1.0".to_string());
+        manifest.add_entry(ManifestEntry {
+            name: "content/chapter-001.md".to_string(),
+            size: 4096,
+            digest: "encrypted_digest_b64".to_string(),
+            encrypted: Some(true),
+            original_size: Some(3072),
+        });
+        manifest.add_entry(ManifestEntry {
+            name: "content/chapter-002.md".to_string(),
+            size: 2048,
+            digest: "plain_digest_b64".to_string(),
+            encrypted: None,
+            original_size: None,
+        });
+
+        let text = manifest.to_manifest_string();
+        // Encrypted entry should have the Encrypted and Original-Size fields.
+        // 加密条目应包含 Encrypted 和 Original-Size 字段。
+        assert!(text.contains("Encrypted: true"));
+        assert!(text.contains("Original-Size: 3072"));
+        // Non-encrypted entry should NOT have these fields.
+        // 非加密条目不应包含这些字段。
+        let sections: Vec<&str> = text.split("\n\n").collect();
+        assert_eq!(sections.len(), 3); // main + 2 entries
+        let second_entry = sections[2];
+        assert!(!second_entry.contains("Encrypted"));
+        assert!(!second_entry.contains("Original-Size"));
+    }
+
+    #[test]
+    fn test_manifest_encrypted_parse() {
+        // Parsing MANIFEST.MF text with Encrypted/Original-Size fields.
+        // 解析包含 Encrypted/Original-Size 字段的 MANIFEST.MF 文本。
+        let text = "Manifest-Version: 1.0\n\
+                     UCX-Version: 1.0\n\
+                     Hash-Algorithm: BLAKE3\n\
+                     \n\
+                     Name: content/chapter-001.md\n\
+                     Size: 4096\n\
+                     BLAKE3-Digest: encrypted_digest_b64\n\
+                     Encrypted: true\n\
+                     Original-Size: 3072\n\
+                     \n\
+                     Name: content/chapter-002.md\n\
+                     Size: 2048\n\
+                     BLAKE3-Digest: plain_digest_b64\n";
+
+        let manifest = Manifest::from_manifest_str(text).unwrap();
+        assert_eq!(manifest.entries.len(), 2);
+
+        // First entry: encrypted.
+        // 第一个条目：加密。
+        assert_eq!(manifest.entries[0].encrypted, Some(true));
+        assert_eq!(manifest.entries[0].original_size, Some(3072));
+
+        // Second entry: not encrypted (fields absent → None).
+        // 第二个条目：未加密（字段缺失 → None）。
+        assert_eq!(manifest.entries[1].encrypted, None);
+        assert_eq!(manifest.entries[1].original_size, None);
+    }
+
+    #[test]
+    fn test_manifest_encrypted_round_trip() {
+        // Round-trip: encrypted entry should survive serialize → parse.
+        // 往返：加密条目应在序列化 → 解析后保持不变。
+        let mut original = Manifest::new("1.0", HashAlgorithm::Blake3);
+        original.created_by = Some("round-trip-test".to_string());
+        original.add_entry(ManifestEntry {
+            name: "content/secret.md".to_string(),
+            size: 8192,
+            digest: "secret_digest_b64".to_string(),
+            encrypted: Some(true),
+            original_size: Some(6144),
+        });
+
+        let text = original.to_manifest_string();
+        let parsed = Manifest::from_manifest_str(&text).unwrap();
+
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].name, "content/secret.md");
+        assert_eq!(parsed.entries[0].size, 8192);
+        assert_eq!(parsed.entries[0].encrypted, Some(true));
+        assert_eq!(parsed.entries[0].original_size, Some(6144));
     }
 }

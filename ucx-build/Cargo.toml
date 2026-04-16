@@ -23,6 +23,7 @@ authors.workspace = true
 # --- Internal crates / 内部 crate ---
 ucx-types = { workspace = true }
 ucx-version = { path = "../ucx-version" }
+ucx-crypto = { workspace = true }
 
 # --- Archive / 归档 ---
 zip = { workspace = true }

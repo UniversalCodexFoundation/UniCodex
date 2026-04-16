@@ -21,6 +21,8 @@ authors.workspace = true
 # --- Internal crates / 内部 crate ---
 # Shared types (Codex, Structure, Manifest, etc.) / 公共类型
 ucx-types = { workspace = true }
+# Encryption support for UCXE detection / 加密支持（UCXE 检测）
+ucx-crypto = { workspace = true }
 
 # --- Archive / 归档 ---
 zip = { workspace = true }

@@ -71,6 +71,11 @@ pub enum ParseError {
     /// 检测到路径遍历攻击（如条目包含 `..` 或以 `/` 开头）。
     #[error("path traversal detected: {0}")]
     PathTraversal(String),
+
+    /// The file is encrypted (UCXE format) and cannot be read as plaintext.
+    /// 文件已加密（UCXE 格式），无法作为明文读取。
+    #[error("file is encrypted: {0}")]
+    Encrypted(String),
 }
 
 // =============================================================================
@@ -275,13 +280,20 @@ impl UcxArchive {
     /// The `file` parameter is the file path as listed in `struct.json`
     /// (e.g., `"chapter-001.md"`). The actual ZIP entry is `content/{file}`.
     ///
+    /// If the file is encrypted (starts with UCXE magic), returns
+    /// `ParseError::Encrypted` instead of attempting UTF-8 decode.
+    ///
     /// 读取指定章节文件的文本内容。
     /// `file` 参数是 `struct.json` 中列出的文件路径（如 `"chapter-001.md"`）。
     /// 实际 ZIP 条目为 `content/{file}`。
     ///
+    /// 如果文件已加密（以 UCXE 魔数开头），返回 `ParseError::Encrypted`
+    /// 而非尝试 UTF-8 解码。
+    ///
     /// # Errors / 错误
     ///
     /// - `MissingFile` if the chapter entry does not exist.
+    /// - `Encrypted` if the content starts with the UCXE magic number.
     /// - `Encoding` if the content is not valid UTF-8.
     pub fn read_chapter(&mut self, file: &str) -> Result<String, ParseError> {
         // Build the full path within the ZIP archive.
@@ -293,6 +305,14 @@ impl UcxArchive {
         // 读取条目内容为字节。
         let bytes = read_entry_bytes(&mut self.archive, &entry_path)?;
 
+        // Check for UCXE encrypted format (magic: "UCXE").
+        // 检查 UCXE 加密格式（魔数："UCXE"）。
+        if ucx_crypto::is_encrypted(&bytes) {
+            return Err(ParseError::Encrypted(format!(
+                "chapter '{entry_path}' is encrypted (UCXE format) — decrypt before reading"
+            )));
+        }
+
         // Decode as UTF-8 string.
         // 解码为 UTF-8 字符串。
         String::from_utf8(bytes).map_err(|e| {
@@ -300,6 +320,32 @@ impl UcxArchive {
                 "chapter '{entry_path}' is not valid UTF-8: {e}"
             ))
         })
+    }
+
+    /// Read the raw bytes of a specific chapter file (encrypted or not).
+    ///
+    /// Unlike `read_chapter`, this does not check for UCXE magic or attempt
+    /// UTF-8 decoding. Useful for encrypted files that need external decryption.
+    ///
+    /// 读取指定章节文件的原始字节（无论是否加密）。
+    /// 与 `read_chapter` 不同，此方法不检查 UCXE 魔数，也不尝试 UTF-8 解码。
+    /// 适用于需要外部解密的加密文件。
+    pub fn read_chapter_raw(&mut self, file: &str) -> Result<Vec<u8>, ParseError> {
+        let entry_path = format!("content/{file}");
+        debug!("Reading chapter raw bytes: {}", entry_path);
+        read_entry_bytes(&mut self.archive, &entry_path)
+    }
+
+    /// Check if a chapter file is encrypted by examining its first bytes.
+    ///
+    /// Reads the file content and checks for the UCXE magic number (0x55 0x43 0x58 0x45).
+    ///
+    /// 通过检查文件首字节判断章节是否已加密。
+    /// 读取文件内容并检查 UCXE 魔数（0x55 0x43 0x58 0x45）。
+    pub fn is_chapter_encrypted(&mut self, file: &str) -> Result<bool, ParseError> {
+        let entry_path = format!("content/{file}");
+        let bytes = read_entry_bytes(&mut self.archive, &entry_path)?;
+        Ok(ucx_crypto::is_encrypted(&bytes))
     }
 
     /// Verify the hashes of all files listed in the manifest.
