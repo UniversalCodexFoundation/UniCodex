@@ -420,7 +420,11 @@ fn encrypt_with_passphrase_and_params(
     // Step 6: Extract the 32-byte encryption key (first 32 bytes of derived output).
     // 第 6 步：提取 32 字节加密密钥（派生输出的前 32 字节）。
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().expect("derived key >= 32 bytes"));
+    let key: Zeroizing<[u8; 32]> = Zeroizing::new(
+        derived[..32].try_into().map_err(|_| {
+            CryptoError::KeyDerivation("derived key shorter than 32 bytes / 派生密钥不足 32 字节".into())
+        })?,
+    );
 
     // Step 7: Encrypt and build UCXE. For AES-CBC, pass the full 64-byte key via special path.
     // 第 7 步：加密并构建 UCXE。对于 AES-CBC，通过特殊路径传递完整 64 字节密钥。
@@ -503,7 +507,11 @@ pub fn decrypt_with_passphrase(
     if ucxe.header.algorithm == Algorithm::Aes256Cbc {
         decrypt_aes_cbc_payload(&derived, &ucxe)
     } else {
-        let key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().expect("derived key >= 32 bytes"));
+        let key: Zeroizing<[u8; 32]> = Zeroizing::new(
+            derived[..32].try_into().map_err(|_| {
+                CryptoError::KeyDerivation("derived key shorter than 32 bytes / 派生密钥不足 32 字节".into())
+            })?,
+        );
         decrypt_ucxe_payload(&key, &ucxe)
     }
 }
@@ -612,8 +620,16 @@ fn encrypt_aes_cbc_to_ucxe(
     // Split derived key into enc_key (first 32B) and mac_key (last 32B).
     // 将派生密钥分为 enc_key（前 32B）和 mac_key（后 32B）。
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().expect("derived >= 64 bytes"));
-    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[32..64].try_into().expect("derived >= 64 bytes"));
+    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(
+        derived[..32].try_into().map_err(|_| {
+            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
+        })?,
+    );
+    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(
+        derived[32..64].try_into().map_err(|_| {
+            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
+        })?,
+    );
 
     let (ciphertext, iv, hmac_tag) = aes_cbc::encrypt(&enc_key, &mac_key, plaintext)?;
 
@@ -694,8 +710,16 @@ fn decrypt_aes_cbc_payload(
     ucxe: &format::UcxeFile,
 ) -> Result<Vec<u8>, CryptoError> {
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().expect("derived >= 64 bytes"));
-    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[32..64].try_into().expect("derived >= 64 bytes"));
+    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(
+        derived[..32].try_into().map_err(|_| {
+            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
+        })?,
+    );
+    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(
+        derived[32..64].try_into().map_err(|_| {
+            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
+        })?,
+    );
 
     let iv: [u8; 16] = ucxe.iv.clone().try_into().map_err(|_| {
         CryptoError::InvalidFormat("AES-CBC IV must be 16 bytes".into())
