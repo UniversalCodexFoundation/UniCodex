@@ -28,6 +28,10 @@ use thiserror::Error;
 /// UCXE 二进制格式的序列化与反序列化。
 pub mod format;
 
+/// AES-256-GCM encryption engine.
+/// AES-256-GCM 加密引擎。
+pub mod aes_gcm;
+
 // 后续步骤会添加更多模块：
 // pub mod kdf;       // 密钥派生
 // pub mod cipher;    // 加密/解密实现
