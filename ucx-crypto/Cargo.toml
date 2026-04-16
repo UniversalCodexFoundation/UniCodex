@@ -21,6 +21,29 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# --- Symmetric encryption / 对称加密 ---
+aes-gcm = { workspace = true }          # AES-256-GCM AEAD
+chacha20poly1305 = { workspace = true }  # ChaCha20-Poly1305 AEAD
+aes = { workspace = true }              # AES block cipher (CBC mode)
+cbc = { workspace = true }              # CBC block cipher mode
+hmac = { workspace = true }             # HMAC-SHA256 (Encrypt-then-MAC)
+
+# --- Key derivation / 密钥派生 ---
+argon2 = { workspace = true }           # Argon2id password hashing
+pbkdf2 = { workspace = true }           # PBKDF2-HMAC-SHA256
+
+# --- Hashing / 哈希 ---
+sha2 = { workspace = true }             # SHA-256 for HMAC and PBKDF2
+
+# --- Random / 随机数 ---
+rand = { workspace = true }             # CSPRNG for IV/Nonce/Salt generation
+
+# --- Memory safety / 内存安全 ---
+zeroize = { workspace = true }          # Secure memory zeroing
+
+# --- Encoding / 编码 ---
+base64 = { workspace = true }           # Base64 for paragraph-level encryption
+
 # --- Serialization / 序列化 ---
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -31,7 +54,6 @@ thiserror = { workspace = true }
 # --- Logging / 日志 ---
 tracing = { workspace = true }
 
-# NOTE: Cryptographic dependencies (aes-gcm, chacha20poly1305, argon2, etc.)
-# will be added when implementation begins in Phase 2.
-# 注意：密码学依赖（aes-gcm、chacha20poly1305、argon2 等）
-# 将在 Phase 2 开始实现时添加。
+[dev-dependencies]
+# --- Testing / 测试 ---
+tempfile = { workspace = true }

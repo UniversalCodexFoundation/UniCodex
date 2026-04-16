@@ -14,10 +14,24 @@
 //! - AES-256-GCM（推荐）
 //! - ChaCha20-Poly1305
 //! - AES-256-CBC + HMAC-SHA256（Encrypt-then-MAC）
+//!
 //! 同时处理 UCXE 二进制格式、密钥派生（Argon2id / PBKDF2）
 //! 和大文件分块加密（>64 MiB）。
 
 use thiserror::Error;
+
+// =============================================================================
+// Sub-modules / 子模块
+// =============================================================================
+
+/// UCXE binary format read/write.
+/// UCXE 二进制格式的序列化与反序列化。
+pub mod format;
+
+// 后续步骤会添加更多模块：
+// pub mod kdf;       // 密钥派生
+// pub mod cipher;    // 加密/解密实现
+// pub mod chunk;     // 大文件分块加密
 
 // =============================================================================
 // Constants / 常量
@@ -75,6 +89,13 @@ pub enum CryptoError {
 /// Supported encryption algorithms.
 ///
 /// 支持的加密算法。
+///
+/// Each variant corresponds to an Algorithm ID byte in the UCXE header:
+/// - `0x01` = AES-256-GCM
+/// - `0x02` = AES-256-CBC (Encrypt-then-MAC)
+/// - `0x03` = ChaCha20-Poly1305
+///
+/// 每个变体对应 UCXE 头部中的算法 ID 字节。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
     /// AES-256-GCM (recommended).
@@ -89,9 +110,54 @@ pub enum Algorithm {
     ChaCha20Poly1305 = 0x03,
 }
 
+impl Algorithm {
+    /// Convert a `u8` byte to an `Algorithm` variant.
+    /// Returns `None` if the byte does not correspond to a known algorithm.
+    ///
+    /// 将 `u8` 字节转换为 `Algorithm` 枚举变体。
+    /// 如果字节不对应任何已知算法，则返回 `None`。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ucx_crypto::Algorithm;
+    /// assert_eq!(Algorithm::from_u8(0x01), Some(Algorithm::Aes256Gcm));
+    /// assert_eq!(Algorithm::from_u8(0xFF), None);
+    /// ```
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x01 => Some(Self::Aes256Gcm),
+            0x02 => Some(Self::Aes256Cbc),
+            0x03 => Some(Self::ChaCha20Poly1305),
+            _ => None,
+        }
+    }
+
+    /// Convert an `Algorithm` variant to its `u8` byte representation.
+    ///
+    /// 将 `Algorithm` 枚举变体转换为 `u8` 字节表示。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ucx_crypto::Algorithm;
+    /// assert_eq!(Algorithm::Aes256Gcm.to_u8(), 0x01);
+    /// ```
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 /// Supported key derivation functions.
 ///
 /// 支持的密钥派生函数。
+///
+/// Each variant corresponds to a KDF ID byte in the UCXE header:
+/// - `0x00` = None (key provided directly)
+/// - `0x01` = Argon2id
+/// - `0x02` = PBKDF2-HMAC-SHA256
+///
+/// 每个变体对应 UCXE 头部中的 KDF ID 字节。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kdf {
     /// No KDF — key is provided directly.
@@ -104,6 +170,44 @@ pub enum Kdf {
 
     /// PBKDF2-HMAC-SHA256.
     Pbkdf2HmacSha256 = 0x02,
+}
+
+impl Kdf {
+    /// Convert a `u8` byte to a `Kdf` variant.
+    /// Returns `None` if the byte does not correspond to a known KDF.
+    ///
+    /// 将 `u8` 字节转换为 `Kdf` 枚举变体。
+    /// 如果字节不对应任何已知 KDF，则返回 `None`。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ucx_crypto::Kdf;
+    /// assert_eq!(Kdf::from_u8(0x00), Some(Kdf::None));
+    /// assert_eq!(Kdf::from_u8(0xFF), None);
+    /// ```
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0x00 => Some(Self::None),
+            0x01 => Some(Self::Argon2id),
+            0x02 => Some(Self::Pbkdf2HmacSha256),
+            _ => None,
+        }
+    }
+
+    /// Convert a `Kdf` variant to its `u8` byte representation.
+    ///
+    /// 将 `Kdf` 枚举变体转换为 `u8` 字节表示。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ucx_crypto::Kdf;
+    /// assert_eq!(Kdf::None.to_u8(), 0x00);
+    /// ```
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 // =============================================================================
@@ -121,13 +225,13 @@ pub enum Kdf {
 /// # Arguments / 参数
 ///
 /// * `source`    - Path to the plaintext file.
-///                 明文文件路径。
+///   明文文件路径。
 /// * `dest`      - Path for the encrypted output.
-///                 加密输出文件路径。
+///   加密输出文件路径。
 /// * `key`       - The encryption key (32 bytes).
-///                 加密密钥（32 字节）。
+///   加密密钥（32 字节）。
 /// * `algorithm` - The encryption algorithm to use.
-///                 使用的加密算法。
+///   使用的加密算法。
 ///
 /// # Returns / 返回
 ///
@@ -139,8 +243,8 @@ pub fn encrypt(
     _key: &[u8; 32],
     _algorithm: Algorithm,
 ) -> Result<(), CryptoError> {
-    // TODO: Implement encryption.
-    // TODO: 实现加密。
+    // TODO: Implement encryption (Step 6).
+    // TODO: 实现加密（Step 6）。
     //
     // Steps / 步骤:
     // 1. Read plaintext from source.
@@ -167,9 +271,9 @@ pub fn encrypt(
 /// # Arguments / 参数
 ///
 /// * `source` - Path to the UCXE encrypted file.
-///              UCXE 加密文件路径。
+///   UCXE 加密文件路径。
 /// * `key`    - The decryption key (32 bytes).
-///              解密密钥（32 字节）。
+///   解密密钥（32 字节）。
 ///
 /// # Returns / 返回
 ///
@@ -179,8 +283,8 @@ pub fn decrypt(
     _source: &std::path::Path,
     _key: &[u8; 32],
 ) -> Result<Vec<u8>, CryptoError> {
-    // TODO: Implement decryption.
-    // TODO: 实现解密。
+    // TODO: Implement decryption (Step 6).
+    // TODO: 实现解密（Step 6）。
     //
     // Steps / 步骤:
     // 1. Read the UCXE file.
@@ -205,7 +309,7 @@ pub fn decrypt(
 /// # Arguments / 参数
 ///
 /// * `data` - The first few bytes of the file.
-///            文件的前几个字节。
+///   文件的前几个字节。
 ///
 /// # Returns / 返回
 ///
@@ -223,6 +327,8 @@ pub fn is_encrypted(data: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    /// Test that `is_encrypted` correctly identifies UCXE magic.
+    /// 测试 `is_encrypted` 是否正确识别 UCXE 魔数。
     #[test]
     fn test_is_encrypted() {
         // UCXE magic number should be detected.
@@ -238,10 +344,54 @@ mod tests {
         assert!(!is_encrypted(b""));
     }
 
+    /// Verify the magic number constant matches "UCXE" in ASCII.
+    /// 验证魔数常量与 ASCII "UCXE" 一致。
     #[test]
     fn test_magic_constant() {
-        // Verify the magic number constant matches "UCXE" in ASCII.
-        // 验证魔数常量与 ASCII "UCXE" 一致。
         assert_eq!(&UCXE_MAGIC, b"UCXE");
+    }
+
+    /// Test `Algorithm::from_u8` / `to_u8` round-trip for all variants.
+    /// 测试所有 `Algorithm` 变体的 `from_u8` / `to_u8` 往返转换。
+    #[test]
+    fn test_algorithm_from_to_u8() {
+        // Verify each known algorithm ID round-trips correctly.
+        // 验证每个已知算法 ID 能正确往返转换。
+        for (byte, expected) in [
+            (0x01u8, Algorithm::Aes256Gcm),
+            (0x02, Algorithm::Aes256Cbc),
+            (0x03, Algorithm::ChaCha20Poly1305),
+        ] {
+            let algo = Algorithm::from_u8(byte).expect("known algorithm byte");
+            assert_eq!(algo, expected);
+            assert_eq!(algo.to_u8(), byte);
+        }
+
+        // Unknown algorithm IDs should return None.
+        // 未知算法 ID 应返回 None。
+        assert!(Algorithm::from_u8(0x00).is_none());
+        assert!(Algorithm::from_u8(0xFF).is_none());
+    }
+
+    /// Test `Kdf::from_u8` / `to_u8` round-trip for all variants.
+    /// 测试所有 `Kdf` 变体的 `from_u8` / `to_u8` 往返转换。
+    #[test]
+    fn test_kdf_from_to_u8() {
+        // Verify each known KDF ID round-trips correctly.
+        // 验证每个已知 KDF ID 能正确往返转换。
+        for (byte, expected) in [
+            (0x00u8, Kdf::None),
+            (0x01, Kdf::Argon2id),
+            (0x02, Kdf::Pbkdf2HmacSha256),
+        ] {
+            let kdf = Kdf::from_u8(byte).expect("known KDF byte");
+            assert_eq!(kdf, expected);
+            assert_eq!(kdf.to_u8(), byte);
+        }
+
+        // Unknown KDF IDs should return None.
+        // 未知 KDF ID 应返回 None。
+        assert!(Kdf::from_u8(0x03).is_none());
+        assert!(Kdf::from_u8(0xFF).is_none());
     }
 }
