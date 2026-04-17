@@ -204,6 +204,16 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     );
 
     // -------------------------------------------------------------------------
+    // Step 1.5: Validate `[project].version` format (ROB-4).
+    // Reject malformed versions like `v1`, empty, `-1.0.0`, `1.0.0.0`, `1.0.0-`.
+    // 步骤 1.5：校验 `[project].version` 格式（ROB-4）。
+    // 拒绝形如 `v1`、空串、`-1.0.0`、`1.0.0.0`、`1.0.0-` 的版本。
+    // -------------------------------------------------------------------------
+    config.project.validate_version().map_err(|e| {
+        BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}"))
+    })?;
+
+    // -------------------------------------------------------------------------
     // Step 2: Convert ProjectConfig → Codex (TOML → codex.json).
     // 步骤 2：转换 ProjectConfig → Codex（TOML → codex.json）。
     // -------------------------------------------------------------------------
@@ -362,6 +372,12 @@ pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResu
     let config: ucx_types::ProjectConfig =
         toml::from_str(&toml_content).map_err(|e| BuildError::ConfigParse(e.to_string()))?;
 
+    // Validate `[project].version` format (ROB-4).
+    // 校验 `[project].version` 格式（ROB-4）。
+    config.project.validate_version().map_err(|e| {
+        BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}"))
+    })?;
+
     // Step 2: Convert config (to validate metadata).
     // 步骤 2：转换配置（以校验元数据）。
     let _codex = convert::config_to_codex(&config);
@@ -500,6 +516,27 @@ pub fn check(project_path: &Path) -> Result<CheckResult, BuildError> {
             }
         }
     };
+
+    // -------------------------------------------------------------------------
+    // Check 1.5: [project].version format validation (ROB-4).
+    // 检查 1.5：[project].version 格式校验（ROB-4）。
+    // -------------------------------------------------------------------------
+    match config.project.validate_version() {
+        Ok(()) => {
+            items.push(CheckItem {
+                name: "[project].version".to_string(),
+                passed: true,
+                message: format!("\"{}\"", config.project.version),
+            });
+        }
+        Err(e) => {
+            items.push(CheckItem {
+                name: "[project].version".to_string(),
+                passed: false,
+                message: format!("{e}"),
+            });
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Check 2: Metadata conversion (ProjectConfig → Codex).
@@ -643,7 +680,83 @@ pub fn check(project_path: &Path) -> Result<CheckResult, BuildError> {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Check 7: Warn about duplicate `file` references in struct.json (ROB-6).
+    // Not a failure — multiple leaf nodes may intentionally reuse a file, but
+    // it is usually a copy-paste mistake; surfacing it as a WARNING lets users
+    // catch it early without blocking the build.
+    // 检查 7：对 struct.json 中重复的 `file` 引用发出警告（ROB-6）。
+    // 不是错误 — 多个叶子节点可能有意复用同一文件，但通常是复制粘贴疏漏；
+    // 以 WARNING 形式暴露可让用户尽早发现而不阻塞构建。
+    // -------------------------------------------------------------------------
+    let duplicates = collect_duplicate_file_refs(&structure.structure);
+    if duplicates.is_empty() {
+        items.push(CheckItem {
+            name: "Duplicate file references".to_string(),
+            passed: true,
+            message: "no duplicates".to_string(),
+        });
+    } else {
+        // Emit a tracing warning for machine-readable logs in addition to the
+        // human-facing CheckItem.
+        // 除了面向人类的 CheckItem 外，也发出一条 tracing::warn 便于日志抓取。
+        for (file, count) in &duplicates {
+            tracing::warn!(
+                file = %file,
+                count = *count,
+                "duplicate chapter reference in struct.json"
+            );
+        }
+        let summary = duplicates
+            .iter()
+            .map(|(f, c)| format!("{f} (x{c})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        items.push(CheckItem {
+            name: "Duplicate file references".to_string(),
+            // Still `passed: true` because this is a warning, not a failure —
+            // we rely on the message to communicate the concern.
+            // 仍设为 `passed: true` — 这是警告而非失败，由 message 传达关注点。
+            passed: true,
+            message: format!("WARNING: duplicates detected: {summary}"),
+        });
+    }
+
     Ok(CheckResult { items })
+}
+
+/// Collect duplicate `file` references from a structure tree.
+///
+/// Returns a vector of `(file_path, occurrence_count)` for every file that
+/// appears more than once across all leaf nodes.
+///
+/// 从结构树收集重复的 `file` 引用。
+/// 返回 `(文件路径, 出现次数)` 向量，覆盖在所有叶子节点中出现超过一次的文件。
+fn collect_duplicate_file_refs(nodes: &[ucx_types::StructureNode]) -> Vec<(String, usize)> {
+    use std::collections::BTreeMap;
+
+    // BTreeMap gives us deterministic ordering in the returned Vec, which keeps
+    // the CheckItem message stable across runs — useful for snapshot tests.
+    // BTreeMap 保证返回向量顺序确定，使 CheckItem 文案跨运行稳定 —
+    // 便于快照测试等场景。
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    fn walk(nodes: &[ucx_types::StructureNode], counts: &mut BTreeMap<String, usize>) {
+        for node in nodes {
+            if let Some(ref file) = node.file {
+                *counts.entry(file.clone()).or_insert(0) += 1;
+            }
+            if let Some(ref children) = node.children {
+                walk(children, counts);
+            }
+        }
+    }
+    walk(nodes, &mut counts);
+
+    counts
+        .into_iter()
+        .filter(|(_, c)| *c > 1)
+        .collect()
 }
 
 // =============================================================================
@@ -756,6 +869,12 @@ fn validate_structure_nodes(nodes: &[ucx_types::StructureNode]) -> Result<(), Bu
             )));
         }
 
+        // Validate the `file` field's path shape for leaf nodes.
+        // 对叶子节点校验 `file` 字段的路径形态。
+        if let Some(ref file) = node.file {
+            validate_structure_file_path(&node.title, file)?;
+        }
+
         // Recurse into children if present.
         // 如果有子节点则递归校验。
         if let Some(ref children) = node.children {
@@ -763,6 +882,111 @@ fn validate_structure_nodes(nodes: &[ucx_types::StructureNode]) -> Result<(), Bu
         }
     }
     Ok(())
+}
+
+/// Validate that a `file` reference in `struct.json` is a safe relative path.
+///
+/// Rejects:
+/// - absolute paths (leading `/`, `\`, or Windows drive letter like `C:`);
+/// - any backslash (`\`), which is ambiguous across platforms;
+/// - any `..` path component, which could escape the `content/` root;
+/// - Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9),
+///   case-insensitive, as either the entire basename or the basename before
+///   its extension — because on Windows they cannot be opened as ordinary files.
+///
+/// These checks mirror the ZIP-entry hardening in `ucx-parse::extract_to` and
+/// reject the problem before the archive is produced.
+///
+/// 校验 `struct.json` 中的 `file` 引用是否为安全的相对路径。
+/// 拒绝：绝对路径（以 `/`、`\` 开头或 Windows 盘符如 `C:`）、反斜杠、
+/// `..` 路径段、以及 Windows 保留设备名（不区分大小写）。
+fn validate_structure_file_path(title: &str, file: &str) -> Result<(), BuildError> {
+    // 1. Empty string rejected.
+    // 1. 空串拒绝。
+    if file.is_empty() {
+        return Err(BuildError::InvalidStructure(format!(
+            "node '{title}' has an empty 'file' reference"
+        )));
+    }
+
+    // 2. No backslashes at all — paths must be forward-slash only, matching the
+    //    ZIP entry convention. This also preempts Windows-drive-letter attacks
+    //    such as `C:\foo`.
+    // 2. 禁止出现反斜杠 — 路径必须仅使用正斜杠，符合 ZIP 条目约定。
+    //    也可预防 Windows 盘符攻击（如 `C:\foo`）。
+    if file.contains('\\') {
+        return Err(BuildError::InvalidStructure(format!(
+            "node '{title}' 'file' reference contains a backslash: '{file}' — use forward slashes"
+        )));
+    }
+
+    // 3. Reject absolute paths: leading '/' or leading '<letter>:'.
+    // 3. 拒绝绝对路径：以 '/' 开头或以 '<letter>:' 开头。
+    if file.starts_with('/') {
+        return Err(BuildError::InvalidStructure(format!(
+            "node '{title}' 'file' reference is absolute: '{file}'"
+        )));
+    }
+    // Windows-style drive absolute: first char ASCII alpha, second char ':'.
+    // Windows 盘符绝对路径：首字符为 ASCII 字母，第二字符为 ':'。
+    let bytes = file.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return Err(BuildError::InvalidStructure(format!(
+            "node '{title}' 'file' reference is an absolute Windows path: '{file}'"
+        )));
+    }
+
+    // 4. No `..` components. Splitting on `/` catches segments exactly.
+    // 4. 禁止 `..` 路径段。按 `/` 分割精确匹配段名。
+    for segment in file.split('/') {
+        if segment == ".." {
+            return Err(BuildError::InvalidStructure(format!(
+                "node '{title}' 'file' reference contains '..' segment: '{file}'"
+            )));
+        }
+    }
+
+    // 5. Reject Windows reserved device names per segment.
+    //    The OS refuses to create files whose *basename* (with or without
+    //    extension) matches a reserved name like CON, NUL, COM1, etc. This
+    //    check runs on every segment to also catch directories named similarly.
+    // 5. 每个路径段都拒绝 Windows 保留设备名。
+    //    OS 拒绝创建基名（带/不带扩展名）等于 CON、NUL、COM1 等保留名的文件。
+    //    对每个段都检查，顺带拒绝同名目录。
+    for segment in file.split('/') {
+        if is_windows_reserved_name(segment) {
+            return Err(BuildError::InvalidStructure(format!(
+                "node '{title}' 'file' reference uses Windows reserved name: '{file}'"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check whether a path segment corresponds to a Windows reserved device name.
+///
+/// The reserved names are: CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9.
+/// The check is case-insensitive and applied to the segment both as-is and
+/// with any trailing extension removed (`NUL.txt` is also reserved).
+///
+/// 判断路径段是否为 Windows 保留设备名。
+/// 保留名：CON、PRN、AUX、NUL、COM1..COM9、LPT1..LPT9。
+/// 检查不区分大小写，同时对原段和去扩展名后的段进行匹配
+/// （`NUL.txt` 也视为保留）。
+fn is_windows_reserved_name(segment: &str) -> bool {
+    // Strip the extension (everything from the first '.') for comparison.
+    // 去除扩展名（从第一个 '.' 开始）用于比较。
+    let stem = segment.split('.').next().unwrap_or(segment);
+    let upper = stem.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL"
+            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
+            | "COM6" | "COM7" | "COM8" | "COM9"
+            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
+            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    )
 }
 
 /// Validate that all file references in struct.json exist in the content directory.
@@ -1304,5 +1528,170 @@ language = "zh-CN"
             err_msg.contains("nonexistent.md"),
             "error should mention the missing file, got: {err_msg}"
         );
+    }
+
+    // =========================================================================
+    // ROB-3/5: struct.json file 字段路径约束测试
+    // =========================================================================
+
+    /// Build a struct.json string whose single leaf's `file` is the given value.
+    ///
+    /// 构造一个 struct.json 字符串，其中唯一叶子节点的 `file` 为指定值。
+    fn struct_json_with_file(file_value: &str) -> String {
+        format!(
+            r#"{{
+    "version": "1.0",
+    "structure": [
+        {{
+            "title": "第一章",
+            "file": {file_value:?}
+        }}
+    ]
+}}"#
+        )
+    }
+
+    /// Set up a project whose struct.json references a suspicious file path.
+    /// Returns the project directory so tests can invoke `build()` on it.
+    ///
+    /// 设置一个 struct.json 引用可疑路径的项目；返回项目目录供测试使用。
+    fn make_project_with_file_ref(dir: &Path, file_value: &str) {
+        fs::create_dir_all(dir.join("content")).unwrap();
+        fs::write(
+            dir.join("unicodex.toml"),
+            r#"
+[project]
+version = "1.0"
+
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+
+[title]
+main = "测试小说"
+
+[[creators]]
+name = "测试作者"
+role = "author"
+
+[book]
+language = "zh-CN"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("content/struct.json"),
+            struct_json_with_file(file_value),
+        )
+        .unwrap();
+    }
+
+    /// Test: absolute POSIX path in `file` is rejected.
+    /// 测试：`file` 字段为 POSIX 绝对路径时应拒绝。
+    #[test]
+    fn test_build_rejects_absolute_posix_file_ref() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "/etc/passwd");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("absolute")),
+            "expected InvalidStructure/absolute, got: {err:?}"
+        );
+    }
+
+    /// Test: Windows drive-letter absolute path is rejected.
+    /// 测试：Windows 盘符绝对路径应拒绝。
+    #[test]
+    fn test_build_rejects_windows_drive_file_ref() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "C:/evil.md");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(_)),
+            "expected InvalidStructure, got: {err:?}"
+        );
+    }
+
+    /// Test: backslash is rejected (Windows-style separator).
+    /// 测试：反斜杠应拒绝（Windows 风格分隔符）。
+    #[test]
+    fn test_build_rejects_backslash_in_file_ref() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "sub\\chapter.md");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("backslash")),
+            "expected InvalidStructure/backslash, got: {err:?}"
+        );
+    }
+
+    /// Test: `..` segment is rejected.
+    /// 测试：`..` 路径段应拒绝。
+    #[test]
+    fn test_build_rejects_dotdot_in_file_ref() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "../outside.md");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("..")),
+            "expected InvalidStructure/.., got: {err:?}"
+        );
+    }
+
+    /// Test: Windows reserved name `NUL` rejected (as exact basename).
+    /// 测试：Windows 保留名 `NUL` 应拒绝（精确基名）。
+    #[test]
+    fn test_build_rejects_windows_reserved_nul() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "NUL");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("reserved")),
+            "expected InvalidStructure/reserved, got: {err:?}"
+        );
+    }
+
+    /// Test: Windows reserved name `CON.txt` rejected (basename before extension).
+    /// 测试：Windows 保留名 `CON.txt` 应拒绝（基名去扩展名后匹配）。
+    #[test]
+    fn test_build_rejects_windows_reserved_with_ext() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "con.txt");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(_)),
+            "expected InvalidStructure, got: {err:?}"
+        );
+    }
+
+    /// Test: COM1 / LPT9 rejected (case-insensitive).
+    /// 测试：COM1 / LPT9 应拒绝（不区分大小写）。
+    #[test]
+    fn test_build_rejects_windows_reserved_com_lpt() {
+        let tmp = TempDir::new().unwrap();
+
+        let dir1 = tmp.path().join("n1");
+        make_project_with_file_ref(&dir1, "COM1.md");
+        assert!(build(&dir1, &BuildOptions::default()).is_err());
+
+        let dir2 = tmp.path().join("n2");
+        make_project_with_file_ref(&dir2, "lpt9");
+        assert!(build(&dir2, &BuildOptions::default()).is_err());
+    }
+
+    /// Test: empty file string is rejected.
+    /// 测试：空字符串 `file` 应拒绝。
+    #[test]
+    fn test_build_rejects_empty_file_ref() {
+        let tmp = TempDir::new().unwrap();
+        let project_dir = tmp.path().join("novel");
+        make_project_with_file_ref(&project_dir, "");
+        let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
+        assert!(matches!(err, BuildError::InvalidStructure(_)));
     }
 }

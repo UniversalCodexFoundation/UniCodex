@@ -116,6 +116,132 @@ pub struct ProjectSection {
     pub version: String,
 }
 
+impl ProjectSection {
+    /// Validate that `version` matches an acceptable spec version format.
+    ///
+    /// Acceptable shapes, matched case-insensitively for the pre-release tag:
+    /// - `MAJOR.MINOR`                     (e.g., `1.0`)
+    /// - `MAJOR.MINOR.PATCH`               (e.g., `1.0.0`)
+    /// - `MAJOR.MINOR.PATCH-pre`           (e.g., `1.0.0-alpha.1`, `0.4.0-beta`)
+    ///
+    /// Explicit rejections (matching the ROB-4 checklist):
+    /// - single-component or prefix like `v1`, `v1.0` (leading `v`);
+    /// - empty string;
+    /// - negative-looking components (`-1.0.0`);
+    /// - four-component `MAJOR.MINOR.PATCH.EXTRA` (`1.0.0.0`);
+    /// - trailing-dash pre-release (`1.0.0-`) or empty-segment forms.
+    ///
+    /// 校验 `version` 字段是否为可接受的规范版本字符串。
+    pub fn validate_version(&self) -> Result<(), VersionFormatError> {
+        validate_project_version(&self.version)
+    }
+}
+
+/// Errors produced by [`ProjectSection::validate_version`].
+///
+/// [`ProjectSection::validate_version`] 产生的错误。
+#[derive(Debug, thiserror::Error)]
+pub enum VersionFormatError {
+    /// The version string does not match the accepted format.
+    /// 版本字符串不符合允许的格式。
+    #[error("invalid project version '{0}': {1}")]
+    Invalid(String, &'static str),
+}
+
+/// Validate a version string according to ROB-4 rules.
+///
+/// This helper lives at module level so callers (e.g., `ucx-build check`)
+/// can reuse it without constructing a full `ProjectSection`.
+///
+/// 按 ROB-4 规则校验版本字符串；公开供 `ucx-build check` 等复用。
+pub fn validate_project_version(v: &str) -> Result<(), VersionFormatError> {
+    // Quick rejects.
+    // 快速拒绝。
+    if v.is_empty() {
+        return Err(VersionFormatError::Invalid(
+            v.to_string(),
+            "version must not be empty",
+        ));
+    }
+    if v.starts_with('v') || v.starts_with('V') {
+        return Err(VersionFormatError::Invalid(
+            v.to_string(),
+            "version must not have a leading 'v'",
+        ));
+    }
+    if v.starts_with('-') || v.starts_with('.') {
+        return Err(VersionFormatError::Invalid(
+            v.to_string(),
+            "version must not start with '-' or '.'",
+        ));
+    }
+
+    // Split off the optional pre-release (after the first '-').
+    // 拆出可选的 pre-release（首个 '-' 之后）。
+    let (numeric_part, pre_part) = match v.split_once('-') {
+        Some((n, p)) => (n, Some(p)),
+        None => (v, None),
+    };
+
+    // Numeric part must have 2 or 3 dot-separated components, each a non-negative
+    // integer with no internal sign, and non-empty.
+    // 数字部分必须是 2 或 3 个点分段，每段为非负整数，内部无符号且非空。
+    let segments: Vec<&str> = numeric_part.split('.').collect();
+    if segments.len() < 2 || segments.len() > 3 {
+        return Err(VersionFormatError::Invalid(
+            v.to_string(),
+            "expected 2 or 3 dot-separated numeric components (e.g. '1.0' or '1.0.0')",
+        ));
+    }
+    for seg in &segments {
+        if seg.is_empty() {
+            return Err(VersionFormatError::Invalid(
+                v.to_string(),
+                "numeric component must not be empty",
+            ));
+        }
+        // Ensure only ASCII digits — this also rejects '-1' or '+1'.
+        // 仅允许 ASCII 数字 — 同时拒绝 '-1' 或 '+1'。
+        if !seg.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(VersionFormatError::Invalid(
+                v.to_string(),
+                "numeric component must contain only ASCII digits",
+            ));
+        }
+    }
+
+    // Pre-release part (if present): must be non-empty; each dot-separated
+    // identifier must be non-empty and composed of `[A-Za-z0-9-]`.
+    // 如有 pre-release 部分：整体非空；每个点分标识非空且仅含 `[A-Za-z0-9-]`。
+    if let Some(pre) = pre_part {
+        if pre.is_empty() {
+            return Err(VersionFormatError::Invalid(
+                v.to_string(),
+                "pre-release suffix must not be empty",
+            ));
+        }
+        for id in pre.split('.') {
+            if id.is_empty() {
+                return Err(VersionFormatError::Invalid(
+                    v.to_string(),
+                    "pre-release identifier must not be empty",
+                ));
+            }
+            if !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            {
+                return Err(VersionFormatError::Invalid(
+                    v.to_string(),
+                    "pre-release identifier must match [A-Za-z0-9-]+",
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// The `[identifier]` section of `unicodex.toml`.
 ///
 /// `unicodex.toml` 的 `[identifier]` 段。
@@ -417,6 +543,104 @@ semantic = "volume.chapter.patch"
         let vc = config.version_config.unwrap();
         assert_eq!(vc.strategy.as_deref(), Some("auto"));
         assert_eq!(vc.auto_on_build, Some(true));
+    }
+
+    // =========================================================================
+    // ROB-4: 版本字符串格式校验测试
+    // =========================================================================
+
+    #[test]
+    fn test_validate_version_accepts_two_component() {
+        // "1.0" is the minimum acceptable shape.
+        // "1.0" 为最小可接受形式。
+        assert!(validate_project_version("1.0").is_ok());
+        assert!(validate_project_version("10.20").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_accepts_three_component() {
+        // "1.0.0" is the classic semver numeric core.
+        // "1.0.0" 为标准 semver 数字核心。
+        assert!(validate_project_version("1.0.0").is_ok());
+        assert!(validate_project_version("0.4.0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_accepts_pre_release() {
+        // Pre-release suffix is permitted.
+        // 允许 pre-release 后缀。
+        assert!(validate_project_version("1.0.0-alpha").is_ok());
+        assert!(validate_project_version("1.0.0-alpha.1").is_ok());
+        assert!(validate_project_version("1.0.0-rc.2").is_ok());
+        assert!(validate_project_version("0.4.0-beta").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_v_prefix() {
+        // Leading 'v' must be rejected.
+        // 前缀 'v' 必须拒绝。
+        assert!(validate_project_version("v1").is_err());
+        assert!(validate_project_version("v1.0").is_err());
+        assert!(validate_project_version("V2.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_empty() {
+        // Empty string must be rejected.
+        // 空串必须拒绝。
+        assert!(validate_project_version("").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_negative() {
+        // "-1.0.0" must be rejected (starts with '-').
+        // "-1.0.0" 必须拒绝（以 '-' 开头）。
+        assert!(validate_project_version("-1.0.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_four_component() {
+        // "1.0.0.0" exceeds the allowed MAJOR.MINOR.PATCH shape.
+        // "1.0.0.0" 超出允许的 MAJOR.MINOR.PATCH 形式。
+        assert!(validate_project_version("1.0.0.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_trailing_dash() {
+        // "1.0.0-" has an empty pre-release suffix.
+        // "1.0.0-" 的 pre-release 后缀为空。
+        assert!(validate_project_version("1.0.0-").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_single_component() {
+        // Single-component "1" is not enough.
+        // 仅单段 "1" 不足。
+        assert!(validate_project_version("1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_non_numeric() {
+        // Numeric components must be ASCII digits.
+        // 数字段必须为 ASCII 数字。
+        assert!(validate_project_version("1.a").is_err());
+        assert!(validate_project_version("1.0.b").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_empty_numeric_segment() {
+        // Double-dot or trailing-dot must be rejected.
+        // 双点或尾部句点必须拒绝。
+        assert!(validate_project_version("1..0").is_err());
+        assert!(validate_project_version("1.0.").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_rejects_empty_pre_release_segment() {
+        // Trailing or empty pre-release identifier must be rejected.
+        // pre-release 尾部或空标识必须拒绝。
+        assert!(validate_project_version("1.0.0-alpha.").is_err());
+        assert!(validate_project_version("1.0.0-.alpha").is_err());
     }
 
     #[test]
