@@ -86,6 +86,18 @@ enum Commands {
         /// 从目录中现有的 .md 文件初始化。
         #[arg(long, default_value_t = false)]
         from_existing: bool,
+
+        /// Overwrite an existing UCX project (unicodex.toml).
+        ///
+        /// By default `ucx init` refuses to run against a directory that
+        /// already contains `unicodex.toml` to prevent clobbering a live
+        /// project. Pass `--force` to re-initialise in place.
+        ///
+        /// 覆盖已有的 UCX 项目（unicodex.toml）。
+        /// 默认 `ucx init` 拒绝在已包含 `unicodex.toml` 的目录运行，
+        /// 以防止覆盖正在使用的项目；传入 `--force` 可就地重新初始化。
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 
     /// Build (pack) a UCX file from project directory.
@@ -412,7 +424,20 @@ fn main() -> anyhow::Result<()> {
             yes,
             interactive,
             from_existing,
+            force,
         } => {
+            // DOC-6: refuse to clobber an existing project unless --force.
+            // Placed before any I/O so that the user sees the message before
+            // interactive prompts kick in.
+            // DOC-6：除非 --force，否则拒绝覆盖已有项目；
+            // 放在所有 I/O 之前，保证用户先看到提示再进入交互。
+            if path.join("unicodex.toml").exists() && !force {
+                anyhow::bail!(
+                    "directory already contains a UCX project (unicodex.toml at {}); \
+                     use --force to re-initialize",
+                    path.join("unicodex.toml").display()
+                );
+            }
             // Determine final name/author/language values.
             // In interactive mode, prompt for each value with CLI args as defaults.
             // 确定最终的 name/author/language 值。
@@ -675,6 +700,18 @@ fn main() -> anyhow::Result<()> {
         // =====================================================================
         Commands::Verify { file, verbose, show_signers } => {
             let start = std::time::Instant::now();
+
+            // Friendly short-circuit: if the first 4 bytes are the UCXE magic,
+            // the user has handed us a raw encrypted file (UCXE) rather than a
+            // `.ucx` archive. Parsing would fail with a cryptic ZIP error; tell
+            // the user what to run instead.
+            // 友好短路：若前 4 字节为 UCXE 魔数，说明用户传入的是加密裸文件
+            // 而非 `.ucx` 归档。此时 ZIP 解析会给出晦涩错误；直接提示正确命令。
+            if is_ucxe_encrypted_file(&file)? {
+                anyhow::bail!(
+                    "this file appears to be UCXE encrypted, please run `ucx decrypt` first"
+                );
+            }
 
             let mut archive = ucx_parse::open(&file)?;
             let results = archive.verify_hashes()?;
@@ -1035,6 +1072,34 @@ fn main() -> anyhow::Result<()> {
 // =============================================================================
 // Helper functions / 辅助函数
 // =============================================================================
+
+/// Check whether a file begins with the UCXE magic number `b"UCXE"` (0x55 43 58 45).
+///
+/// Returns `Ok(true)` when the file exists and its first four bytes match the
+/// magic. A file shorter than 4 bytes or with different bytes returns
+/// `Ok(false)`. Propagates I/O errors other than EOF.
+///
+/// Used by `ucx verify` to short-circuit with a friendly message when the
+/// user passes a UCXE-encrypted payload instead of a `.ucx` archive.
+///
+/// 判断文件是否以 UCXE 魔数 `b"UCXE"`（0x55 43 58 45）开头。
+/// 文件存在且前 4 字节等于魔数返回 `Ok(true)`；文件不足 4 字节或不等则
+/// 返回 `Ok(false)`；其他 I/O 错误原样向上传递。
+/// `ucx verify` 调用此函数在用户传入 UCXE 裸文件时快速给出友好提示。
+fn is_ucxe_encrypted_file(path: &std::path::Path) -> anyhow::Result<bool> {
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut magic = [0u8; 4];
+    match file.read_exact(&mut magic) {
+        Ok(()) => Ok(magic == *b"UCXE"),
+        // Short file — can't be an UCXE header. Not our job to classify; let
+        // the normal parse surface its own error.
+        // 文件过短 — 肯定不是 UCXE 头，交由正常解析路径报错。
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
 
 /// Read a passphrase from stdin (no echo if terminal).
 ///
