@@ -101,6 +101,39 @@ pub enum CryptoError {
     /// 加密操作过程中的 I/O 错误。
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// KDF parameters fall outside the allowed security / resource bounds.
+    /// 内部包含诊断字符串，供日志或诊断使用 —— 公开 API 在解密路径中
+    /// 会通过 `into_public_decrypt_error` 统一映射为 `DecryptionFailed`。
+    ///
+    /// KDF 参数超出安全或资源上下限。
+    #[error("weak or out-of-range KDF parameters: {0}")]
+    WeakKdfParameters(String),
+
+    /// Generic, opaque decryption failure. Returned by the public `decrypt*`
+    /// entry points so attackers cannot distinguish between wrong-key,
+    /// tampered-ciphertext, or malformed-format errors (防 Oracle 攻击)。
+    ///
+    /// 通用、不透明的解密失败。由公开 `decrypt*` 入口统一返回，
+    /// 攻击者无法区分错误密钥、篡改密文或格式错误（防止信息泄漏 oracle）。
+    #[error("decryption failed")]
+    DecryptionFailed,
+}
+
+impl CryptoError {
+    /// Map any error into the opaque `DecryptionFailed` variant used by the
+    /// public decrypt API. I/O errors are preserved because they indicate
+    /// environmental problems rather than ciphertext tampering.
+    ///
+    /// 将任意错误统一映射为公开 decrypt API 使用的不透明 `DecryptionFailed`。
+    /// I/O 错误保持原样 —— 它反映的是环境问题而非密文被篡改。
+    #[allow(dead_code)] // used by public decrypt API after CRYPTO-6 lands
+    pub(crate) fn into_public_decrypt_error(self) -> CryptoError {
+        match self {
+            CryptoError::Io(_) => self,
+            _ => CryptoError::DecryptionFailed,
+        }
+    }
 }
 
 // =============================================================================
@@ -869,12 +902,12 @@ mod tests {
         let plaintext = b"Secret data with Argon2id KDF";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        // Use small Argon2id params for fast testing.
-        // 使用小 Argon2id 参数以加速测试。
+        // Use OWASP-minimum Argon2id params: tests must pass parse-time validation.
+        // 使用符合 OWASP 最低要求的 Argon2id 参数：测试必须能通过解析期校验。
         let kdf_params = format::KdfParams::Argon2id {
-            memory_cost_kib: 256,
-            time_cost: 1,
-            parallelism: 1,
+            memory_cost_kib: kdf::ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: kdf::ARGON2ID_MIN_TIME_COST,
+            parallelism: kdf::ARGON2ID_MIN_PARALLELISM,
         };
 
         encrypt_with_passphrase_and_params(
@@ -898,7 +931,7 @@ mod tests {
         let plaintext = b"Secret data with PBKDF2 KDF";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
 
         encrypt_with_passphrase_and_params(
             &src, &dst, "test-passphrase", Algorithm::ChaCha20Poly1305,
@@ -934,7 +967,7 @@ mod tests {
         let plaintext = b"passphrase-protected data";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
 
         encrypt_with_passphrase_and_params(
             &src, &dst, "correct-passphrase", Algorithm::Aes256Gcm,
@@ -968,7 +1001,7 @@ mod tests {
         let plaintext = b"AES-CBC with passphrase mode";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: 1000 };
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
 
         encrypt_with_passphrase_and_params(
             &src, &dst, "cbc-passphrase", Algorithm::Aes256Cbc,

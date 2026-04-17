@@ -22,6 +22,32 @@ use std::io::{Read, Write, Cursor};
 use crate::{Algorithm, CryptoError, Kdf, UCXE_FORMAT_VERSION, UCXE_MAGIC};
 
 // =============================================================================
+// Length-field upper bounds / 长度字段上限常量
+// =============================================================================
+//
+// These caps harden `read_ucxe` against maliciously-crafted or corrupted input
+// where the declared length far exceeds the remaining readable bytes. Without
+// caps, a `Vec::with_capacity(huge_value)` call can trigger a panic/OOM before
+// `read_exact` fails. Each cap reflects the realistic maximum for that field.
+//
+// 这些上限用于防范恶意构造或损坏的输入 —— 声明长度远超剩余可读字节时，
+// 未加校验的 `Vec::with_capacity(huge_value)` 会在 `read_exact` 失败前触发
+// panic/OOM。每个上限都反映该字段在正常场景下的合理最大值。
+
+/// Maximum allowed salt length (bytes). UCX 规范规定 salt 固定 16 B，
+/// 上限放宽至 1 KiB 以容错但仍能阻断攻击者构造的巨大值。
+pub(crate) const MAX_SALT_LEN: usize = 1024;
+
+/// Maximum allowed IV/nonce length (bytes). 常见 AEAD nonce 12 B，
+/// AES-CBC IV 16 B，上限 256 B 足以容错。
+pub(crate) const MAX_IV_LEN: usize = 256;
+
+/// Absolute hard cap for ciphertext length: 16 GiB.
+/// UCXE 文件理论上不会大于 16 GiB；任何超过该值的声明都视为恶意或损坏。
+/// 绝对硬上限，密文长度 16 GiB。
+pub(crate) const MAX_CIPHERTEXT_LEN: u64 = 16 * 1024 * 1024 * 1024;
+
+// =============================================================================
 // Types / 类型定义
 // =============================================================================
 
@@ -238,10 +264,81 @@ pub fn write_ucxe(writer: &mut impl Write, file: &UcxeFile) -> Result<(), Crypto
 /// - `CryptoError::Io` if any read operation fails.
 ///   如果任何读取操作失败则返回 `CryptoError::Io`。
 pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
-    // Step 1: Read and verify the 4-byte magic number.
-    // 第 1 步：读取并验证 4 字节魔数。
-    let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic)?;
+    // Buffer the entire stream once so we can enforce per-field upper bounds
+    // against the true total size before any large Vec allocation.
+    //
+    // 将整个流一次性缓冲，便于在任何大 Vec 分配之前
+    // 用真实总字节数作为长度字段的真实上限。
+    let mut data = Vec::new();
+    reader.read_to_end(&mut data)?;
+    parse_ucxe(&data)
+}
+
+/// Bounded UCXE parse implementation (used by both `read_ucxe` and `parse_ucxe`).
+///
+/// Enforces a hard cap on every length-prefixed field to prevent panic / OOM
+/// caused by `Vec::with_capacity(huge)` when a malicious or truncated input
+/// declares an absurd length. All caps are constants defined at the top of
+/// this module (`MAX_SALT_LEN`, `MAX_IV_LEN`, `MAX_CIPHERTEXT_LEN`).
+///
+/// 边界安全版本的 UCXE 解析实现（供 `read_ucxe` 和 `parse_ucxe` 复用）。
+/// 对每个带长度前缀的字段强制设置硬上限，防止恶意或截断输入通过声明
+/// 巨大长度值触发 `Vec::with_capacity(huge)` panic/OOM。
+fn parse_ucxe_bounded(data: &[u8]) -> Result<UcxeFile, CryptoError> {
+    let total_len = data.len();
+    let mut cursor = Cursor::new(data);
+
+    // ------------------------------------------------------------------
+    // Small helper closures. Returning closures as nested fns keeps the
+    // boundary checks explicit and easy to audit field-by-field.
+    // 内部小型闭包：保留逐字段的边界校验，便于审计。
+    // ------------------------------------------------------------------
+
+    /// Read exactly `n` bytes or return InvalidFormat on truncation.
+    /// 读取恰好 `n` 字节；若截断则返回 InvalidFormat。
+    fn read_fixed<const N: usize>(
+        cur: &mut Cursor<&[u8]>,
+        field: &'static str,
+    ) -> Result<[u8; N], CryptoError> {
+        let mut buf = [0u8; N];
+        cur.read_exact(&mut buf)
+            .map_err(|_| CryptoError::InvalidFormat(format!("truncated {field} / {field} 截断")))?;
+        Ok(buf)
+    }
+
+    /// Read `n` bytes as Vec with length-cap check against `remaining`.
+    /// 按声明长度读取字节，若长度超过剩余可读或硬上限则拒绝。
+    fn read_vec(
+        cur: &mut Cursor<&[u8]>,
+        declared: usize,
+        hard_cap: usize,
+        remaining: usize,
+        field: &'static str,
+    ) -> Result<Vec<u8>, CryptoError> {
+        // Reject values larger than the realistic upper bound for this field,
+        // or larger than the bytes actually available in the input.
+        // 声明值若超过该字段的合理上限或剩余可读字节，则拒绝。
+        if declared > hard_cap {
+            return Err(CryptoError::InvalidFormat(format!(
+                "{field} too large: {declared} > {hard_cap} / {field} 长度过大"
+            )));
+        }
+        if declared > remaining {
+            return Err(CryptoError::InvalidFormat(format!(
+                "{field} length {declared} exceeds remaining {remaining} bytes / \
+                 {field} 长度超过剩余字节"
+            )));
+        }
+        let mut buf = vec![0u8; declared];
+        cur.read_exact(&mut buf).map_err(|_| {
+            CryptoError::InvalidFormat(format!("truncated {field} body / {field} 主体截断"))
+        })?;
+        Ok(buf)
+    }
+
+    // Step 1: Magic number (4 B).
+    // 第 1 步：4 字节魔数。
+    let magic = read_fixed::<4>(&mut cursor, "magic")?;
     if magic != UCXE_MAGIC {
         return Err(CryptoError::InvalidFormat(format!(
             "invalid magic number: expected {:?}, got {:?}",
@@ -249,47 +346,33 @@ pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
         )));
     }
 
-    // Step 2: Read header bytes — version, algorithm ID, KDF ID, reserved.
-    // 第 2 步：读取头部字节 —— 版本、算法 ID、KDF ID、保留位。
-    let mut header_bytes = [0u8; 4];
-    reader.read_exact(&mut header_bytes)?;
+    // Step 2: Header (version, algo, kdf, flags) = 4 B.
+    // 第 2 步：头部 4 字节（版本、算法、KDF、标志位）。
+    let header_bytes = read_fixed::<4>(&mut cursor, "header")?;
     let version = header_bytes[0];
     let algo_id = header_bytes[1];
     let kdf_id = header_bytes[2];
-    // Reserved byte bit 0: chunked flag (0x00 = normal, 0x01 = chunked).
-    // 保留字节 bit 0：分块标记（0x00 = 普通，0x01 = 分块）。
     let chunked = (header_bytes[3] & 0x01) != 0;
 
-    // Step 3: Validate format version.
-    // 第 3 步：验证格式版本。
     if version != UCXE_FORMAT_VERSION {
         return Err(CryptoError::InvalidFormat(format!(
             "unsupported format version: expected {:#04X}, got {:#04X}",
             UCXE_FORMAT_VERSION, version
         )));
     }
-
-    // Step 4: Parse algorithm ID.
-    // 第 4 步：解析算法 ID。
     let algorithm = Algorithm::from_u8(algo_id).ok_or_else(|| {
         CryptoError::UnsupportedAlgorithm(format!("unknown algorithm ID: {:#04X}", algo_id))
     })?;
-
-    // Step 5: Parse KDF ID.
-    // 第 5 步：解析 KDF ID。
     let kdf = Kdf::from_u8(kdf_id).ok_or_else(|| {
         CryptoError::InvalidFormat(format!("unknown KDF ID: {:#04X}", kdf_id))
     })?;
 
-    // Step 6: Read KDF parameters based on the KDF type.
-    // 第 6 步：根据 KDF 类型读取 KDF 参数。
+    // Step 3: KDF parameters (variable size by KDF type).
+    // 第 3 步：KDF 参数（按 KDF 类型长度不同）。
     let kdf_params = match kdf {
         Kdf::None => KdfParams::None,
         Kdf::Argon2id => {
-            // Read three u32 LE values: memory_cost_kib, time_cost, parallelism.
-            // 读取三个 u32 LE 值：memory_cost_kib、time_cost、parallelism。
-            let mut buf = [0u8; 12];
-            reader.read_exact(&mut buf)?;
+            let buf = read_fixed::<12>(&mut cursor, "Argon2id params")?;
             KdfParams::Argon2id {
                 memory_cost_kib: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
                 time_cost: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
@@ -297,44 +380,95 @@ pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
             }
         }
         Kdf::Pbkdf2HmacSha256 => {
-            // Read one u32 LE value: iterations.
-            // 读取一个 u32 LE 值：iterations。
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
+            let buf = read_fixed::<4>(&mut cursor, "PBKDF2 params")?;
             KdfParams::Pbkdf2 {
                 iterations: u32::from_le_bytes(buf),
             }
         }
     };
 
-    // Step 7: Read salt — u16 LE length prefix followed by salt bytes.
-    // 第 7 步：读取盐值 —— u16 LE 长度前缀加盐值字节。
-    let mut len_buf = [0u8; 2];
-    reader.read_exact(&mut len_buf)?;
-    let salt_len = u16::from_le_bytes(len_buf) as usize;
-    let mut salt = vec![0u8; salt_len];
-    reader.read_exact(&mut salt)?;
+    // Step 4: Validate KDF parameters are sane (neither too weak nor absurd).
+    // 第 4 步：校验 KDF 参数处于合理区间（既不过弱也不过大）。
+    crate::kdf::validate_kdf_params(kdf, &kdf_params)?;
 
-    // Step 8: Read IV — u16 LE length prefix followed by IV bytes.
-    // 第 8 步：读取 IV —— u16 LE 长度前缀加 IV 字节。
-    reader.read_exact(&mut len_buf)?;
-    let iv_len = u16::from_le_bytes(len_buf) as usize;
-    let mut iv = vec![0u8; iv_len];
-    reader.read_exact(&mut iv)?;
+    // Step 5: Salt (u16-prefixed, capped).
+    // 第 5 步：盐值（u16 长度前缀，受上限约束）。
+    let salt_len_buf = read_fixed::<2>(&mut cursor, "salt length")?;
+    let salt_len = u16::from_le_bytes(salt_len_buf) as usize;
+    let pos = cursor.position() as usize;
+    let salt = read_vec(
+        &mut cursor,
+        salt_len,
+        MAX_SALT_LEN,
+        total_len.saturating_sub(pos),
+        "salt",
+    )?;
 
-    // Step 9: Read ciphertext — u64 LE length prefix followed by ciphertext bytes.
-    // 第 9 步：读取密文 —— u64 LE 长度前缀加密文字节。
-    let mut ct_len_buf = [0u8; 8];
-    reader.read_exact(&mut ct_len_buf)?;
-    let ciphertext_len = u64::from_le_bytes(ct_len_buf) as usize;
-    let mut ciphertext = vec![0u8; ciphertext_len];
-    reader.read_exact(&mut ciphertext)?;
+    // Step 6: IV (u16-prefixed, capped).
+    // 第 6 步：IV（u16 长度前缀，受上限约束）。
+    let iv_len_buf = read_fixed::<2>(&mut cursor, "IV length")?;
+    let iv_len = u16::from_le_bytes(iv_len_buf) as usize;
+    let pos = cursor.position() as usize;
+    let iv = read_vec(
+        &mut cursor,
+        iv_len,
+        MAX_IV_LEN,
+        total_len.saturating_sub(pos),
+        "IV",
+    )?;
 
-    // Step 10: Read authentication tag — length determined by algorithm (no length prefix).
-    // 第 10 步：读取认证标签 —— 长度由算法决定（无长度前缀）。
+    // Step 7: Ciphertext (u64-prefixed, capped at 16 GiB or remaining bytes).
+    // 第 7 步：密文（u64 长度前缀，上限 16 GiB 或剩余字节）。
+    let ct_len_buf = read_fixed::<8>(&mut cursor, "ciphertext length")?;
+    let ciphertext_len_u64 = u64::from_le_bytes(ct_len_buf);
+    if ciphertext_len_u64 > MAX_CIPHERTEXT_LEN {
+        return Err(CryptoError::InvalidFormat(format!(
+            "ciphertext length {ciphertext_len_u64} exceeds hard cap {MAX_CIPHERTEXT_LEN} / \
+             密文长度超过硬上限"
+        )));
+    }
+    // Guard against u64 → usize narrowing on 32-bit platforms.
+    // 防止在 32 位平台上 u64 → usize 溢出。
+    let ciphertext_len: usize = ciphertext_len_u64.try_into().map_err(|_| {
+        CryptoError::InvalidFormat(
+            "ciphertext length exceeds platform usize / 密文长度超 usize".into(),
+        )
+    })?;
+    let pos = cursor.position() as usize;
+    let remaining_after_ct_hdr = total_len.saturating_sub(pos);
+    // Remaining bytes must fit: ciphertext + fixed tag.
+    // 剩余字节需能容纳密文 + 固定长度 tag。
     let tlen = tag_length(algorithm);
-    let mut tag = vec![0u8; tlen];
-    reader.read_exact(&mut tag)?;
+    if ciphertext_len
+        .checked_add(tlen)
+        .is_none_or(|need| need > remaining_after_ct_hdr)
+    {
+        return Err(CryptoError::InvalidFormat(format!(
+            "ciphertext length {ciphertext_len} + tag {tlen} exceeds remaining {remaining_after_ct_hdr} bytes / \
+             密文+tag 超过剩余字节"
+        )));
+    }
+    let ciphertext = read_vec(
+        &mut cursor,
+        ciphertext_len,
+        // Second cap: ciphertext alone cannot exceed the usize half of MAX.
+        // Cast is safe because we already bounded via MAX_CIPHERTEXT_LEN above.
+        // 第二重上限：usize 版本的 16 GiB。
+        MAX_CIPHERTEXT_LEN.min(usize::MAX as u64) as usize,
+        remaining_after_ct_hdr,
+        "ciphertext",
+    )?;
+
+    // Step 8: Auth tag (fixed length determined by algorithm).
+    // 第 8 步：认证标签（长度由算法决定，无长度前缀）。
+    let pos = cursor.position() as usize;
+    let tag = read_vec(
+        &mut cursor,
+        tlen,
+        tlen,
+        total_len.saturating_sub(pos),
+        "auth tag",
+    )?;
 
     Ok(UcxeFile {
         header: UcxeHeader {
@@ -360,8 +494,7 @@ pub fn read_ucxe(reader: &mut impl Read) -> Result<UcxeFile, CryptoError> {
 /// * `data` - The complete UCXE file as a byte slice.
 ///   完整的 UCXE 文件字节切片。
 pub fn parse_ucxe(data: &[u8]) -> Result<UcxeFile, CryptoError> {
-    let mut cursor = Cursor::new(data);
-    read_ucxe(&mut cursor)
+    parse_ucxe_bounded(data)
 }
 
 /// Convenience function: serialize a UCXE file to a byte vector.
@@ -636,5 +769,120 @@ mod tests {
         // Verify the ciphertext length is exactly 1 MiB.
         // 验证密文长度恰好为 1 MiB。
         assert_eq!(parsed.ciphertext.len(), 1024 * 1024);
+    }
+
+    // =========================================================================
+    // Test 11: Tampered KDF ID (Argon2id -> PBKDF2) should return Err, not panic.
+    // 测试 11：篡改 KDF ID（Argon2id -> PBKDF2）应返回 Err 而非 panic。
+    //
+    // Attack model / 攻击模型：
+    //   攻击者在合法 Argon2id-加密文件上把 KDF ID 字节改为 PBKDF2，使解析器
+    //   按 4 字节读取 KDF 参数而非 12 字节，后续 salt_len / iv_len / ct_len
+    //   被错位读到攻击者可控的巨大值，未加边界校验的版本会 panic。
+    // =========================================================================
+    #[test]
+    fn test_tampered_kdf_id_no_panic() {
+        // Build a valid Argon2id-encrypted UCXE (with OWASP-min params).
+        // 构造一个合法 Argon2id UCXE（OWASP 最低参数）。
+        let original = make_test_file(
+            Algorithm::Aes256Gcm,
+            Kdf::Argon2id,
+            KdfParams::Argon2id {
+                memory_cost_kib: crate::kdf::ARGON2ID_MIN_MEMORY_KIB,
+                time_cost: crate::kdf::ARGON2ID_MIN_TIME_COST,
+                parallelism: crate::kdf::ARGON2ID_MIN_PARALLELISM,
+            },
+        );
+        let mut bytes = serialize_ucxe(&original).expect("serialize");
+        // Flip KDF id byte (offset 6: magic[4] + version[1] + algo[1] + kdf).
+        // 翻转第 6 字节 KDF ID，将 Argon2id(0x01) 改为 PBKDF2(0x02)。
+        bytes[6] = 0x02;
+
+        // Must return Err; must NOT panic from Vec::with_capacity.
+        // 必须返回 Err；不得因 Vec::with_capacity 巨大值触发 panic。
+        let result = parse_ucxe(&bytes);
+        assert!(result.is_err(), "tampered KDF id must be rejected");
+    }
+
+    // =========================================================================
+    // Test 12: ct_len = u64::MAX must return Err, not panic with OOM.
+    // 测试 12：ct_len = u64::MAX 必须返回 Err，而非因 OOM panic。
+    // =========================================================================
+    #[test]
+    fn test_ciphertext_length_u64_max_no_panic() {
+        // Handcraft minimal UCXE bytes with ct_len = u64::MAX.
+        // 手工构造 UCXE：ct_len = u64::MAX。
+        let mut data = Vec::new();
+        data.extend_from_slice(&UCXE_MAGIC);
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00]); // version=1, algo=GCM, kdf=None
+        data.extend_from_slice(&[0x00, 0x00]); // salt_len = 0
+        data.extend_from_slice(&[0x00, 0x00]); // iv_len = 0
+        data.extend_from_slice(&u64::MAX.to_le_bytes()); // ct_len = u64::MAX
+        data.extend_from_slice(&[0x00; 16]); // fake tag (won't be reached)
+
+        let result = parse_ucxe(&data);
+        assert!(
+            result.is_err(),
+            "ciphertext length = u64::MAX must be rejected"
+        );
+    }
+
+    // =========================================================================
+    // Test 13: salt_len larger than remaining bytes must return Err.
+    // 测试 13：salt_len 大于剩余字节时必须返回 Err。
+    // =========================================================================
+    #[test]
+    fn test_salt_len_exceeds_remaining() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&UCXE_MAGIC);
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00]);
+        // salt_len = 0xFFFF (65535) but only a few trailing bytes exist.
+        // salt_len = 0xFFFF，但后续只剩少量字节。
+        data.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        data.extend_from_slice(&[0u8; 8]); // short tail
+
+        let result = parse_ucxe(&data);
+        assert!(result.is_err(), "oversized salt_len must be rejected");
+    }
+
+    // =========================================================================
+    // Test 14: iv_len beyond MAX_IV_LEN must return Err.
+    // 测试 14：iv_len 超过 MAX_IV_LEN 时必须返回 Err。
+    // =========================================================================
+    #[test]
+    fn test_iv_len_too_large() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&UCXE_MAGIC);
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00]);
+        data.extend_from_slice(&[0x00, 0x00]); // salt_len = 0
+        // iv_len = 1024 exceeds MAX_IV_LEN (256).
+        // iv_len = 1024 超过 MAX_IV_LEN。
+        data.extend_from_slice(&1024u16.to_le_bytes());
+        data.extend_from_slice(&[0u8; 32]); // some trailing bytes
+
+        let result = parse_ucxe(&data);
+        assert!(result.is_err(), "iv_len above MAX_IV_LEN must be rejected");
+    }
+
+    // =========================================================================
+    // Test 15: salt_len above MAX_SALT_LEN must return Err.
+    // 测试 15：salt_len 超过 MAX_SALT_LEN 时必须返回 Err。
+    // =========================================================================
+    #[test]
+    fn test_salt_len_above_cap() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&UCXE_MAGIC);
+        data.extend_from_slice(&[0x01, 0x01, 0x00, 0x00]);
+        // salt_len = 2048 (> MAX_SALT_LEN = 1024) but buffer is oversized so
+        // the check is strictly against the hard cap, not remaining bytes.
+        // salt_len = 2048（超过 MAX_SALT_LEN = 1024）。
+        data.extend_from_slice(&2048u16.to_le_bytes());
+        data.extend_from_slice(&vec![0u8; 4096]); // enough tail
+
+        let result = parse_ucxe(&data);
+        assert!(
+            result.is_err(),
+            "salt_len above MAX_SALT_LEN must be rejected"
+        );
     }
 }

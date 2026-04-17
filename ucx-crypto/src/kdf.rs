@@ -37,6 +37,130 @@ pub const PBKDF2_DEFAULT_ITERATIONS: u32 = 600_000;
 pub const SALT_SIZE: usize = 16;
 
 // =============================================================================
+// KDF Parameter Bounds / KDF 参数上下限
+// =============================================================================
+//
+// OWASP 2023 recommends Argon2id: m ≥ 19 MiB, t ≥ 2, p ≥ 1.
+// We additionally cap time/memory to prevent DoS via maliciously-large params.
+//
+// OWASP 2023 推荐 Argon2id：m ≥ 19 MiB, t ≥ 2, p ≥ 1。
+// 额外设置上限以防范恶意超大参数导致的拒绝服务攻击。
+
+/// Argon2id minimum memory cost (KiB). OWASP 2023 推荐最低 19 MiB。
+pub const ARGON2ID_MIN_MEMORY_KIB: u32 = 19_456;
+
+/// Argon2id maximum memory cost (KiB). 4 GiB 作为硬上限，防 DoS。
+pub const ARGON2ID_MAX_MEMORY_KIB: u32 = 4_194_304;
+
+/// Argon2id minimum time cost (iterations).
+pub const ARGON2ID_MIN_TIME_COST: u32 = 2;
+
+/// Argon2id maximum time cost (iterations). 上限防 DoS。
+pub const ARGON2ID_MAX_TIME_COST: u32 = 100;
+
+/// Argon2id minimum parallelism.
+pub const ARGON2ID_MIN_PARALLELISM: u32 = 1;
+
+/// PBKDF2 minimum iteration count. OWASP 2023 推荐 ≥ 600,000；
+/// 此处取保守下限 100,000 以兼容旧文件但仍阻断极弱参数。
+pub const PBKDF2_MIN_ITERATIONS: u32 = 100_000;
+
+/// PBKDF2 maximum iteration count. 上限防 DoS。
+pub const PBKDF2_MAX_ITERATIONS: u32 = 10_000_000;
+
+/// Validate KDF parameters against minimum security and maximum resource bounds.
+///
+/// Called by `format::parse_ucxe` immediately after the KDF parameters are
+/// decoded. Rejecting out-of-range values at parse time prevents both:
+/// 1. Weak-parameter attacks (too low → password cracking trivial).
+/// 2. Resource-exhaustion attacks (too high → DoS during decryption).
+///
+/// 在 `format::parse_ucxe` 解析完 KDF 参数后调用。
+/// 解析阶段就拒绝越界值可同时防范：
+/// 1. 弱参数攻击（过低会使口令爆破变得容易）；
+/// 2. 资源耗尽攻击（过高会在解密时触发 DoS）。
+///
+/// # Arguments / 参数
+///
+/// * `kdf`        - The declared KDF variant / 声明的 KDF 类型。
+/// * `kdf_params` - The decoded parameter struct / 解码后的参数结构。
+///
+/// # Errors / 错误
+///
+/// Returns `CryptoError::WeakKdfParameters` if any parameter is out of bounds.
+/// 任一参数越界则返回 `CryptoError::WeakKdfParameters`。
+pub fn validate_kdf_params(
+    kdf: crate::Kdf,
+    kdf_params: &crate::format::KdfParams,
+) -> Result<(), CryptoError> {
+    match (kdf, kdf_params) {
+        // KDF None → params must also be None, no bounds to check.
+        // KDF 为 None 时参数也应为 None，无上下限校验。
+        (crate::Kdf::None, crate::format::KdfParams::None) => Ok(()),
+        // Mismatch between KDF id and params variant: reject as weak/malformed.
+        // KDF ID 与参数变体不一致：按非法处理。
+        (crate::Kdf::None, _) | (_, crate::format::KdfParams::None) => {
+            Err(CryptoError::WeakKdfParameters(
+                "KDF id and parameter variant mismatch / KDF ID 与参数变体不一致".into(),
+            ))
+        }
+        (
+            crate::Kdf::Argon2id,
+            crate::format::KdfParams::Argon2id {
+                memory_cost_kib,
+                time_cost,
+                parallelism,
+            },
+        ) => {
+            if *memory_cost_kib < ARGON2ID_MIN_MEMORY_KIB {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id memory {memory_cost_kib} KiB < min {ARGON2ID_MIN_MEMORY_KIB} KiB"
+                )));
+            }
+            if *memory_cost_kib > ARGON2ID_MAX_MEMORY_KIB {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id memory {memory_cost_kib} KiB > max {ARGON2ID_MAX_MEMORY_KIB} KiB"
+                )));
+            }
+            if *time_cost < ARGON2ID_MIN_TIME_COST {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id time {time_cost} < min {ARGON2ID_MIN_TIME_COST}"
+                )));
+            }
+            if *time_cost > ARGON2ID_MAX_TIME_COST {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id time {time_cost} > max {ARGON2ID_MAX_TIME_COST}"
+                )));
+            }
+            if *parallelism < ARGON2ID_MIN_PARALLELISM {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id parallelism {parallelism} < min {ARGON2ID_MIN_PARALLELISM}"
+                )));
+            }
+            Ok(())
+        }
+        (crate::Kdf::Pbkdf2HmacSha256, crate::format::KdfParams::Pbkdf2 { iterations }) => {
+            if *iterations < PBKDF2_MIN_ITERATIONS {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "PBKDF2 iterations {iterations} < min {PBKDF2_MIN_ITERATIONS}"
+                )));
+            }
+            if *iterations > PBKDF2_MAX_ITERATIONS {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "PBKDF2 iterations {iterations} > max {PBKDF2_MAX_ITERATIONS}"
+                )));
+            }
+            Ok(())
+        }
+        // Any other (kdf, params) pairing is malformed.
+        // 其他不匹配组合视为非法。
+        _ => Err(CryptoError::WeakKdfParameters(
+            "KDF id and parameter variant mismatch / KDF ID 与参数变体不一致".into(),
+        )),
+    }
+}
+
+// =============================================================================
 // Public Functions / 公开函数
 // =============================================================================
 
