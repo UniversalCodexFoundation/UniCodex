@@ -20,7 +20,22 @@
 
 use std::path::Path;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
+
+/// Normalize a passphrase into NFC (Normalization Form C) before it reaches
+/// the KDF. Without this step, two visually-identical passphrases that use
+/// different Unicode code-point sequences (e.g. precomposed "é" vs.
+/// "e" + combining acute) would derive different keys, which surprises
+/// users who simply retype the same password from a different keyboard.
+///
+/// 将口令归一化为 NFC（Normalization Form C）后再传入 KDF。
+/// 如果不做 NFC，视觉上相同但码点序列不同的口令（例如预组合的 "é"
+/// 与分解后的 "e + 合成尖音符"）会派生出不同密钥，用户在不同键盘/输入
+/// 法上重新输入“同一口令”时会意外解密失败。
+fn normalize_passphrase(raw: &str) -> String {
+    raw.nfc().collect::<String>()
+}
 
 // =============================================================================
 // Sub-modules / 子模块
@@ -454,9 +469,21 @@ fn encrypt_with_passphrase_and_params(
     // 第 2 步：确定输出长度 —— AES-CBC 需要 64 字节，其他需要 32 字节。
     let output_len = if algorithm == Algorithm::Aes256Cbc { 64 } else { 32 };
 
-    // Step 3: Derive key(s) from passphrase.
-    // 第 3 步：从口令派生密钥。
-    let derived = kdf::derive_key(passphrase.as_bytes(), &salt, kdf_type, kdf_params, output_len)?;
+    // Step 3: NFC-normalize the passphrase before KDF. This makes two visually
+    //         identical passphrases with different code-point sequences yield
+    //         the same derived key. See `normalize_passphrase` docstring.
+    // 第 3 步：NFC 归一化口令后再派生密钥。
+    let normalized = normalize_passphrase(passphrase);
+
+    // Step 4: Derive key(s) from the normalized passphrase bytes.
+    // 第 4 步：使用归一化后的口令字节派生密钥。
+    let derived = kdf::derive_key(
+        normalized.as_bytes(),
+        &salt,
+        kdf_type,
+        kdf_params,
+        output_len,
+    )?;
 
     // Step 4: Read plaintext.
     // 第 4 步：读取明文。
@@ -557,10 +584,12 @@ fn decrypt_with_passphrase_internal(
         ))
     })?;
 
-    // Step 5: Derive key(s) from passphrase.
-    // 第 5 步：从口令派生密钥。
+    // Step 5: NFC-normalize the passphrase, then derive key(s). Normalization
+    //         must happen identically on both encrypt and decrypt sides.
+    // 第 5 步：对口令 NFC 归一化后再派生密钥；加密与解密两端必须一致。
+    let normalized = normalize_passphrase(passphrase);
     let derived = kdf::derive_key(
-        passphrase.as_bytes(),
+        normalized.as_bytes(),
         &salt,
         ucxe.header.kdf,
         &ucxe.kdf_params,
@@ -1085,6 +1114,49 @@ mod tests {
         let decrypted = decrypt_with_passphrase(&dst, "cbc-passphrase")
             .expect("decrypt should succeed");
 
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Passphrase NFC normalization: two visually identical passphrases that
+    /// use different Unicode code-point sequences (NFC vs. NFD) must decrypt
+    /// the same ciphertext.
+    ///
+    /// The string "café" can be stored as:
+    ///   NFC: "caf" + U+00E9 (é)               → 5 bytes
+    ///   NFD: "caf" + U+0065 (e) + U+0301 (́)  → 6 bytes (combining acute)
+    ///
+    /// After NFC normalization both forms produce the same key material.
+    ///
+    /// 测试口令 NFC 归一化：同一视觉口令的两种 Unicode 码点序列（NFC 与
+    /// NFD）必须能解密同一份密文。
+    #[test]
+    fn test_passphrase_nfc_normalization() {
+        let plaintext = b"NFC normalization test";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        // Encrypt using the NFD (decomposed) form of "café".
+        // 使用 NFD（分解）形式的 "café" 加密。
+        let nfd_passphrase = "cafe\u{0301}"; // e + combining acute
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
+        encrypt_with_passphrase_and_params(
+            &src,
+            &dst,
+            nfd_passphrase,
+            Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
+        )
+        .expect("encrypt with NFD passphrase should succeed");
+
+        // Decrypt using the NFC (precomposed) form — must succeed because
+        // both forms are normalized to the same NFC bytes before KDF.
+        // 使用 NFC（预组合）形式解密 —— 因为双方在 KDF 前都会被归一化为
+        // 相同的 NFC 字节，所以必须成功。
+        let nfc_passphrase = "caf\u{00E9}"; // precomposed é
+        let decrypted = decrypt_with_passphrase(&dst, nfc_passphrase)
+            .expect("decrypt with NFC-equivalent passphrase should succeed");
         assert_eq!(decrypted, plaintext);
     }
 

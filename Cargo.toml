@@ -116,6 +116,7 @@ uuid = { version = "1", features = ["v4"] }          # UUID v4 for UCX ID genera
 
 # --- Encoding / 编码 ---
 base64 = "0.22"                                      # Base64 encoding for MANIFEST.MF digests / MANIFEST.MF 摘要编码
+unicode-normalization = "0.1"                        # Unicode NFC normalization for KDF passphrase / KDF 口令的 NFC 归一化
 
 # --- File traversal / 文件遍历 ---
 walkdir = "2"                                        # Recursive directory traversal / 递归目录遍历
