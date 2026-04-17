@@ -136,6 +136,15 @@ Salt 长度    : 128 bit (16 bytes)，随机生成
 输出密钥长度 : 256 bit (32 bytes)
 ```
 
+**Argon2id 参数上下限**（实现者 MUST 校验）：
+
+| 参数          | 最小值     | 最大值       | 说明                                                 |
+|---------------|-----------|-------------|------------------------------------------------------|
+| memory (KiB)  | 8 192     | 4 194 304   | 8 MiB 下限防弱参数；4 GiB 上限防 DoS 风险。         |
+| iterations    | 1         | 10          | 过高迭代会拖慢合法用户，实测 10 已覆盖极端场景。    |
+| parallelism   | 1         | 255         | 与 Argon2 规范上限一致。                             |
+| output length | 32        | 64          | UCX 仅使用 32 或 64 字节（CBC 模式下需双密钥）。    |
+
 **备选 KDF**：PBKDF2-HMAC-SHA256
 
 ```
@@ -145,6 +154,15 @@ PRF          : HMAC-SHA256
 Salt 长度    : 128 bit (16 bytes)，随机生成
 输出密钥长度 : 256 bit (32 bytes)
 ```
+
+**PBKDF2 参数上下限**（实现者 MUST 校验）：
+
+| 参数        | 最小值     | 最大值        | 说明                                         |
+|-------------|-----------|--------------|----------------------------------------------|
+| iterations  | 100 000   | 10 000 000   | 下限符合 OWASP 2023 基线；上限防 DoS。      |
+| salt (bytes)| 16        | 64           | 16 字节是碰撞安全最小值；过长无益。         |
+
+> 解析 UCXE 头部时若发现 KDF 参数越界，实现 MUST 拒绝解密并返回明确错误，不得尝试解密后失败。
 
 ### 3.2 密钥派生流程
 
@@ -236,6 +254,22 @@ Hex:   55 43 58 45
 |-----|------|------|
 | bit 0 | Chunked | `0` = 普通加密（整体加密），`1` = 分块加密（Chunked Encryption，见 §8.3） |
 | bit 1–7 | Reserved | 保留位，**必须为 `0`**。阅读器应忽略未知 bit，写入时必须置零 |
+
+**AAD 构造规则**（AES-256-GCM / ChaCha20-Poly1305 的 Associated Authenticated Data）：
+
+AEAD 算法 MUST 将 UCXE 文件头绑定到密文，防止攻击者剥离或替换头部字段（典型攻击：把 Algorithm ID 从 `0x01` 改为 `0x02` 以降级、把 Flags 的 Chunked bit 由 `1` 改为 `0` 以触发非法长度解析等）。
+
+AAD 按下列字节序拼接，总长度固定为头部前 8 字节（至 Salt Length 为止）：
+
+```
+AAD = MagicNumber(4) || FormatVersion(1) || AlgorithmID(1) || KdfID(1) || Flags(1)
+```
+
+即整个 UCXE 固定头部，不含可变长度的 Salt / IV / KDF 参数区（这些字段在其内部已由密文完整性覆盖）。
+
+- 长度固定为 **8 字节**；无需长度前缀。
+- 解密时实现 MUST 从实际读取的头部重新组装 AAD，并传入 AEAD `decrypt(..., aad)`；任何头部篡改将导致 AEAD tag 校验失败。
+- 对 AES-256-CBC（Encrypt-then-HMAC）同样的 8 字节前缀 MUST 被 HMAC 覆盖，详见 §4.3。
 
 ### 4.2 KDF 参数存储
 
@@ -492,10 +526,14 @@ Original-Size: 15360
 
 ```
 块大小        : 1 MiB (1,048,576 bytes)
-Nonce 模式    : 基础 Nonce + 块序号
-Nonce 计算    : nonce = base_nonce XOR uint96_le(chunk_index)
+Base Nonce    : 随机生成的 64-bit 盐（随 UCXE 头存储）
+Nonce 模式    : 拼接式（concatenation），禁止使用 XOR 派生
+Nonce 计算    : nonce = base_nonce[0..8] || chunk_index.to_be_bytes()   (共 12 bytes)
+              其中 chunk_index 为 32-bit 大端整数（u32 BE）
 最后一块      : 可小于 1 MiB
 ```
+
+> **Rationale（不得使用 XOR 派生）**：早期版本使用 `nonce = base XOR uint96_le(chunk_index)`。在该方案下，攻击者如能影响 96-bit `base_nonce`，即可让两对不同的 `(key, chunk_index)` 产生相同 nonce，违反 AEAD 对 (key, nonce) 唯一性的要求。改为**拼接式**后，不同 `chunk_index` 值位于 nonce 的低 4 字节且互不相交，天然保证不可能碰撞。实现 MUST 使用拼接式，不允许兼容旧的 XOR 方案。
 
 **分块加密文件格式**（在标准 UCXE 头部之后）：
 
@@ -532,7 +570,7 @@ ucx encrypt --chapter content/chapter-002.md \
 # 加密章节（使用直接密钥）
 ucx encrypt --chapter content/chapter-002.md \
             --algorithm AES-256-GCM \
-            --key "base64-encoded-key"
+            --key "<BASE64_32BYTE_KEY>"
 
 # 加密章节（使用密码派生）
 ucx encrypt --chapter content/chapter-002.md \
@@ -543,13 +581,13 @@ ucx encrypt --chapter content/chapter-002.md \
 # 加密资源
 ucx encrypt --resource assets/images/img-001.jpg \
             --algorithm AES-256-GCM \
-            --key "base64-encoded-key"
+            --key "<BASE64_32BYTE_KEY>"
 
 # 批量加密（根据 struct.json / resource.json 配置）
 ucx encrypt --all
 
 # 解密测试
-ucx decrypt --chapter content/chapter-002.md --key "base64-key"
+ucx decrypt --chapter content/chapter-002.md --key "<BASE64_32BYTE_KEY>"
 
 # 查看加密状态
 ucx info --encryption novel.ucx

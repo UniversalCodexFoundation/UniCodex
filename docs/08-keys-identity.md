@@ -311,6 +311,17 @@ UCX 定义了可选的自定义证书扩展：
 - 任何人都可以创建声称是"著名作者"的自签名证书
 - 适合建立"同一作者"的一致性，而非验证"是谁"
 
+#### 5.2.1 有效期校验（normative）
+
+执行"3. 检查证书有效期"这一步时，实现 MUST 按以下规则处理：
+
+1. **当前时间**：取系统 UTC 时钟作为参照时刻 `now`。
+2. **notBefore 校验**：若 `now < cert.notBefore`，视为 **尚未生效**，验证结果 MUST 标记为 `Invalid`，并返回可读错误（示例："certificate not yet valid: notBefore=2026-05-01T00:00:00Z, now=2026-04-15T12:00:00Z"）。
+3. **notAfter 校验**：若 `now > cert.notAfter`，视为 **已过期**，验证结果 MUST 标记为 `Invalid`。
+4. **时钟偏移**：实现 SHOULD 允许最多 5 分钟的时钟偏移，以容忍签名时刻与校验时刻的正常时钟漂移；超过 5 分钟不得放行。
+5. **过期不是警告**：已过期证书 MUST NOT 回退为 `ValidWithWarnings` 或 `Unsigned` 状态；必须为 `Invalid`。
+6. 实现 MAY 额外对比 UCX 文件 `metadata/codex.json` 中的 `dates.published` 与证书有效期，发现"签名时刻超出证书有效期"时作为补充警告输出。
+
 ### 5.3 CA 签发证书验证
 
 **验证流程**：
@@ -345,6 +356,17 @@ UCX 定义了可选的自定义证书扩展：
 │                                        │
 └────────────────────────────────────────┘
 ```
+
+#### 5.3.1 有效期校验（normative）
+
+执行"4. 验证每级证书的有效期"这一步时，实现 MUST 按以下规则处理：
+
+1. **链上每一级**（leaf → intermediate → root）的 `notBefore`/`notAfter` 都要独立校验，使用同一参照时刻 `now = 系统 UTC`。
+2. 任何一级证书处于 `now < notBefore` 或 `now > notAfter` 状态，整条链 MUST 标记为 `Invalid`。
+3. **时钟偏移**：同 §5.2.1，允许最多 5 分钟偏移。
+4. **Root CA 特例**：若根 CA 在信任库中被标记为"永久信任"，实现 MAY 跳过其 `notAfter` 校验，但 MUST 保留 `notBefore` 校验，并且中间 CA、叶子证书必须严格执行步骤 2。
+5. **过期不可容忍**：无论在签名时证书是否有效，校验时一律以 `now` 为准；"签名时有效、现在已过期"MUST 视为 `Invalid`（过期证书不具备继续信任的法律/技术基础）。
+6. **出错信息**：错误应包含违反有效期的证书 Subject DN、`notBefore`、`notAfter` 和当前时刻，便于排查。
 
 ### 5.4 证书链存储
 
