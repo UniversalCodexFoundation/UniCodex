@@ -746,7 +746,74 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
             }
         };
 
-        let entry_valid = digest_matches && sig_valid && cert_time_valid;
+        // -------------------------------------------------------------------
+        // Enforce: META-INF/certs/<SIGNER>.cert.pem must match the cert
+        // embedded inside the .EC blob. If the archive carries a PEM copy of
+        // the signer's certificate but it disagrees with what the signature
+        // was actually made with, treat the signer as invalid — otherwise an
+        // attacker could substitute the visible PEM while keeping a signed
+        // blob that verifies under a different (hidden) cert.
+        //
+        // 强制要求：META-INF/certs/<SIGNER>.cert.pem 必须与 .EC 块中内嵌的证书
+        // 一致。若归档中携带的签名者证书 PEM 副本与实际用来签名的证书不一致，
+        // 则判定该签名者无效 — 否则攻击者可以在保持签名块的同时替换可见的 PEM，
+        // 让验证看起来是由另一张（隐藏）证书完成的。
+        // -------------------------------------------------------------------
+        let cert_pem_path = format!("META-INF/certs/{signer_id}.cert.pem");
+        let cert_pem_match = if file_names.iter().any(|n| n == &cert_pem_path) {
+            // The PEM file exists — read and compare DER bytes.
+            // PEM 文件存在 — 读取并比较 DER 字节。
+            match read_zip_entry(&mut archive, &cert_pem_path) {
+                Ok(pem_bytes) => {
+                    // Decode PEM to DER.
+                    // 将 PEM 解码为 DER。
+                    match pem_rfc7468::decode_vec(&pem_bytes) {
+                        Ok(("CERTIFICATE", pem_der)) => {
+                            if pem_der == cert_der {
+                                true
+                            } else {
+                                let pem_fp =
+                                    ucx_sign::cert::cert_fingerprint_blake3(&pem_der);
+                                let ec_fp =
+                                    ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
+                                details_parts.push(format!(
+                                    "{signer_id}: certificate mismatch: cert.pem fingerprint={pem_fp}, EC embedded fingerprint={ec_fp}"
+                                ));
+                                false
+                            }
+                        }
+                        Ok((label, _)) => {
+                            details_parts.push(format!(
+                                "{signer_id}: cert.pem has unexpected PEM label '{label}' (expected 'CERTIFICATE')"
+                            ));
+                            false
+                        }
+                        Err(e) => {
+                            details_parts.push(format!(
+                                "{signer_id}: failed to decode cert.pem: {e}"
+                            ));
+                            false
+                        }
+                    }
+                }
+                Err(e) => {
+                    details_parts.push(format!(
+                        "{signer_id}: failed to read cert.pem: {e}"
+                    ));
+                    false
+                }
+            }
+        } else {
+            // No external PEM exists — nothing to cross-check, accept
+            // the embedded cert alone. (Layer 1 signature is still required
+            // to pass via `sig_valid`; a missing PEM is not by itself a
+            // signature-forgery indicator.)
+            // 归档中不存在外部 PEM — 无需交叉校验，仅接受内嵌证书。
+            //（Layer 1 签名仍须通过 `sig_valid`；缺少 PEM 本身并不表示签名伪造。）
+            true
+        };
+
+        let entry_valid = digest_matches && sig_valid && cert_time_valid && cert_pem_match;
         if !entry_valid {
             all_valid = false;
         }
@@ -1148,6 +1215,87 @@ mod tests {
             report1.signers[0].fingerprint_blake3,
             report2.signers[0].fingerprint_blake3,
             "signer fingerprint must be consistent"
+        );
+    }
+
+    /// Test: if META-INF/certs/<SIGNER>.cert.pem is replaced with a different
+    /// (unrelated) certificate, verify must flag the signer as invalid — even
+    /// if the embedded EC cert is still cryptographically consistent.
+    ///
+    /// 测试：若 META-INF/certs/<SIGNER>.cert.pem 被替换为一张不相关的证书，
+    /// 即使 EC 内嵌证书本身密码学上仍然自洽，verify 也必须将该签名者标记为无效。
+    #[test]
+    fn test_cert_pem_mismatch_fails_verification() {
+        let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+        let ucx_path = create_test_ucx(&tmp);
+        sign_test_ucx(&tmp, &ucx_path);
+
+        // Generate a second, unrelated key+cert pair to replace AUTHOR.cert.pem.
+        // 生成第二对不相关的密钥+证书，用来替换 AUTHOR.cert.pem。
+        let other_key = tmp.path().join("other.pem");
+        let other_cert = tmp.path().join("other.cert.pem");
+        ucx_sign::keygen(&other_key).expect("keygen should succeed");
+        ucx_sign::create_cert(&other_key, "Imposter", 365, &other_cert)
+            .expect("create_cert should succeed");
+        let imposter_pem_bytes =
+            std::fs::read(&other_cert).expect("read other cert should succeed");
+
+        // Rewrite the ZIP: read all entries, substitute AUTHOR.cert.pem, write back.
+        // 重写 ZIP：读取所有条目，替换 AUTHOR.cert.pem，写回文件。
+        let original = std::fs::read(&ucx_path).expect("read ucx should succeed");
+        let mut out_buf = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&original);
+            let mut src =
+                zip::ZipArchive::new(cursor).expect("open ZIP should succeed");
+            let out_cursor = std::io::Cursor::new(&mut out_buf);
+            let mut dst = zip::ZipWriter::new(out_cursor);
+            for i in 0..src.len() {
+                let mut entry = src.by_index(i).expect("by_index should succeed");
+                let name = entry.name().to_string();
+                let options: zip::write::SimpleFileOptions =
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(entry.compression());
+                dst.start_file(&name, options)
+                    .expect("start_file should succeed");
+                if name == "META-INF/certs/AUTHOR.cert.pem" {
+                    // Substitute with imposter PEM.
+                    // 替换为冒充者 PEM。
+                    std::io::Write::write_all(&mut dst, &imposter_pem_bytes)
+                        .expect("write imposter pem should succeed");
+                } else {
+                    // Copy original content.
+                    // 复制原内容。
+                    let mut buf = Vec::new();
+                    std::io::Read::read_to_end(&mut entry, &mut buf)
+                        .expect("read entry should succeed");
+                    std::io::Write::write_all(&mut dst, &buf)
+                        .expect("write entry should succeed");
+                }
+            }
+            dst.finish().expect("finish should succeed");
+        }
+        std::fs::write(&ucx_path, &out_buf).expect("write back should succeed");
+
+        let report = verify(&ucx_path).expect("verify should succeed");
+
+        assert_ne!(
+            report.status,
+            VerifyStatus::Valid,
+            "cert.pem substitution must not leave status as Valid"
+        );
+        assert!(
+            report.layer1.as_ref().is_some_and(|r| !r.valid),
+            "Layer 1 must be invalid when cert.pem differs from EC-embedded cert"
+        );
+        let l1_details = report
+            .layer1
+            .as_ref()
+            .map(|r| r.details.clone())
+            .unwrap_or_default();
+        assert!(
+            l1_details.contains("certificate mismatch"),
+            "details should mention 'certificate mismatch', got: {l1_details}"
         );
     }
 
