@@ -23,6 +23,32 @@ use ucx_types::{Codex, Manifest, Structure};
 /// UCX 归档的预期 MIME 类型。
 const UCX_MIMETYPE: &str = "application/vnd.unicodex+zip";
 
+/// Expected ZIP local file header signature (PK\x03\x04) at offset 0.
+///
+/// A valid `.ucx` archive must start with the ZIP Local File Header magic,
+/// otherwise the file may be a concatenation of multiple ZIPs (e.g., via
+/// `cat a.ucx a.ucx > doubled.ucx`) where the embedded ZIP could be parsed
+/// only by relying on the trailing EOCD record. Enforcing this signature
+/// at offset 0 rejects such forged/trailing payloads.
+///
+/// 合法 `.ucx` 归档开头必须是 ZIP 本地文件头魔数（PK\x03\x04）。
+/// 否则文件可能是多个 ZIP 拼接而成（例如 `cat a.ucx a.ucx > doubled.ucx`），
+/// 仅通过尾部 EOCD 记录仍可被解析。在 offset 0 强制校验此签名可拒绝此类伪造/尾缀载荷。
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
+
+/// The highest UCX-Version MAJOR number this library understands.
+///
+/// When parsing MANIFEST.MF, an archive whose `UCX-Version` MAJOR exceeds
+/// this constant is rejected to avoid silently reading forward-incompatible
+/// formats. Bump this constant whenever the on-disk spec introduces a
+/// breaking MAJOR bump.
+///
+/// 本库支持的最高 UCX-Version MAJOR 号。
+/// 解析 MANIFEST.MF 时，若归档 `UCX-Version` 的 MAJOR 高于此常量，
+/// 将被拒绝，以避免静默读取向前不兼容的格式。
+/// 每当磁盘格式规范出现破坏性 MAJOR 升级时，请同步调整此常量。
+pub const SUPPORTED_UCX_MAJOR: u32 = 1;
+
 // =============================================================================
 // Error types / 错误类型
 // =============================================================================
@@ -76,6 +102,11 @@ pub enum ParseError {
     /// 文件已加密（UCXE 格式），无法作为明文读取。
     #[error("file is encrypted: {0}")]
     Encrypted(String),
+
+    /// The archive's UCX-Version MAJOR is higher than this library supports.
+    /// 归档的 UCX-Version MAJOR 超出本库支持范围。
+    #[error("unsupported UCX-Version: {0}")]
+    UnsupportedVersion(String),
 }
 
 // =============================================================================
@@ -175,32 +206,48 @@ impl std::fmt::Debug for UcxArchive {
 pub fn open(path: &Path) -> Result<UcxArchive, ParseError> {
     info!("Opening UCX file: {}", path.display());
 
-    // Step 1: Open the file and create a BufReader.
-    // 步骤 1：打开文件并创建 BufReader。
+    // Step 1: Validate ZIP local file header signature at offset 0.
+    // This guards against concatenated/prefixed ZIP files that the
+    // underlying `zip` crate would otherwise accept by parsing the
+    // trailing EOCD record.
+    // 步骤 1：校验 offset 0 处的 ZIP 本地文件头签名。
+    // 这可防止底层 `zip` crate 通过解析尾部 EOCD 而误接受
+    // 被拼接或带前缀的 ZIP 文件。
+    validate_zip_signature(path)?;
+
+    // Step 2: Open the file and create a BufReader.
+    // 步骤 2：打开文件并创建 BufReader。
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
 
-    // Step 2: Create ZipArchive from the buffered reader.
-    // 步骤 2：从 BufReader 创建 ZipArchive。
+    // Step 3: Create ZipArchive from the buffered reader.
+    // 步骤 3：从 BufReader 创建 ZipArchive。
     let mut archive = zip::ZipArchive::new(reader)?;
     debug!("ZIP archive opened, {} entries found", archive.len());
 
-    // Step 3: Validate mimetype — must be the first entry.
-    // 步骤 3：验证 mimetype — 必须是第一个条目。
+    // Step 4: Validate mimetype — must be the first entry.
+    // 步骤 4：验证 mimetype — 必须是第一个条目。
     validate_mimetype(&mut archive)?;
 
-    // Step 4: Parse MANIFEST.MF.
-    // 步骤 4：解析 MANIFEST.MF。
+    // Step 5: Parse MANIFEST.MF.
+    // 步骤 5：解析 MANIFEST.MF。
     let manifest = parse_manifest(&mut archive)?;
     debug!("MANIFEST.MF parsed, {} entries", manifest.entries.len());
 
-    // Step 5: Parse codex.json.
-    // 步骤 5：解析 codex.json。
+    // Step 6: Enforce UCX-Version MAJOR compatibility from the manifest.
+    // Archives whose MAJOR exceeds `SUPPORTED_UCX_MAJOR` are forward-incompatible
+    // and must be rejected rather than silently read.
+    // 步骤 6：根据 manifest 强制校验 UCX-Version MAJOR 兼容性。
+    // 若 MAJOR 超过 `SUPPORTED_UCX_MAJOR`，该归档向前不兼容，必须拒绝而非静默读取。
+    validate_ucx_version(&manifest.ucx_version)?;
+
+    // Step 7: Parse codex.json.
+    // 步骤 7：解析 codex.json。
     let codex = parse_codex(&mut archive)?;
     debug!("codex.json parsed: \"{}\"", codex.title.main);
 
-    // Step 6: Parse struct.json.
-    // 步骤 6：解析 struct.json。
+    // Step 8: Parse struct.json.
+    // 步骤 8：解析 struct.json。
     let structure = parse_structure(&mut archive)?;
     debug!(
         "struct.json parsed, {} top-level nodes",
@@ -497,6 +544,87 @@ impl UcxArchive {
 // =============================================================================
 // Internal helpers / 内部辅助函数
 // =============================================================================
+
+/// Validate that the file begins with the ZIP Local File Header magic bytes.
+///
+/// Reads only the first 4 bytes of the file and compares them with
+/// `ZIP_LOCAL_FILE_HEADER_SIGNATURE` (`PK\x03\x04`). Files that start with
+/// any other prefix — including ZIPs concatenated after arbitrary payloads —
+/// are rejected with a clear error message.
+///
+/// 校验文件开头必须为 ZIP 本地文件头魔数。
+/// 仅读取文件前 4 字节并与 `ZIP_LOCAL_FILE_HEADER_SIGNATURE`（`PK\x03\x04`）对比。
+/// 以其他字节开头的文件（包括拼接在任意载荷之后的 ZIP）会被明确拒绝。
+fn validate_zip_signature(path: &Path) -> Result<(), ParseError> {
+    use std::io::Read as _;
+
+    // Open the file and attempt to read exactly 4 bytes at offset 0.
+    // 打开文件，尝试从 offset 0 精确读取 4 字节。
+    let mut file = std::fs::File::open(path)?;
+    let mut magic = [0u8; 4];
+
+    // If the file is shorter than 4 bytes, read_exact returns UnexpectedEof.
+    // We translate that into an InvalidFormat error so callers get a clean
+    // message rather than a generic IO error.
+    // 若文件不足 4 字节，read_exact 会返回 UnexpectedEof。
+    // 在此转换为 InvalidFormat，调用方得到干净的提示而非通用 IO 错误。
+    if let Err(e) = file.read_exact(&mut magic) {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            return Err(ParseError::InvalidFormat(
+                "file is too short to be a ZIP archive (<4 bytes)".to_string(),
+            ));
+        }
+        return Err(ParseError::Io(e));
+    }
+
+    // Compare the first 4 bytes against the expected PK local file header.
+    // 将前 4 字节与预期 PK 本地文件头对比。
+    if magic != ZIP_LOCAL_FILE_HEADER_SIGNATURE {
+        return Err(ParseError::InvalidFormat(format!(
+            "invalid UCX file: expected ZIP signature at offset 0, got {:02X} {:02X} {:02X} {:02X}",
+            magic[0], magic[1], magic[2], magic[3]
+        )));
+    }
+
+    debug!("ZIP signature validated at offset 0");
+    Ok(())
+}
+
+/// Validate that a manifest `UCX-Version` string is compatible with this library.
+///
+/// The version string is expected to be of the form `MAJOR.MINOR[.PATCH...]`
+/// where MAJOR is a non-negative integer. Only the MAJOR component is checked;
+/// archives whose MAJOR exceeds `SUPPORTED_UCX_MAJOR` are rejected.
+/// A malformed or non-numeric MAJOR segment is also rejected.
+///
+/// 校验 manifest 中 `UCX-Version` 字符串与本库的兼容性。
+/// 预期版本字符串形如 `MAJOR.MINOR[.PATCH...]`，其中 MAJOR 为非负整数。
+/// 仅检查 MAJOR 分量；若 MAJOR 超过 `SUPPORTED_UCX_MAJOR`，拒绝此归档。
+/// 若 MAJOR 缺失或非数字也一并拒绝。
+fn validate_ucx_version(ucx_version: &str) -> Result<(), ParseError> {
+    // Take the substring before the first '.' as MAJOR (or the whole string if no '.').
+    // 取第一个 '.' 之前的子串作为 MAJOR（若无 '.' 则取整个字符串）。
+    let major_str = ucx_version.split('.').next().unwrap_or("");
+
+    // Parse MAJOR as u32. Reject empty / non-numeric strings with a clear error.
+    // 将 MAJOR 解析为 u32。空串或非数字将被拒绝并给出明确错误。
+    let major: u32 = major_str.parse().map_err(|_| {
+        ParseError::UnsupportedVersion(format!(
+            "UCX-Version MAJOR is not a non-negative integer: '{ucx_version}'"
+        ))
+    })?;
+
+    // Forward-incompatible archives: MAJOR greater than what this library supports.
+    // 向前不兼容归档：MAJOR 高于本库所支持。
+    if major > SUPPORTED_UCX_MAJOR {
+        return Err(ParseError::UnsupportedVersion(format!(
+            "UCX-Version MAJOR {major} exceeds supported MAJOR {SUPPORTED_UCX_MAJOR} (archive version '{ucx_version}')"
+        )));
+    }
+
+    debug!("UCX-Version '{ucx_version}' is compatible (MAJOR={major})");
+    Ok(())
+}
 
 /// Validate that the first entry in the ZIP is `mimetype` with the correct value.
 ///

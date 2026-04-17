@@ -561,3 +561,175 @@ fn test_read_chapter_encrypted_returns_error() {
         "expected ParseError::Encrypted, got: {err:?}"
     );
 }
+
+// =============================================================================
+// ROB-2 / ROB-1: ZIP signature & UCX-Version compatibility tests
+// ROB-2 / ROB-1：ZIP 签名与 UCX-Version 兼容性测试
+// =============================================================================
+
+/// Test: concatenating arbitrary bytes before a valid UCX should cause `open()` to
+/// reject the file with `InvalidFormat` due to a missing ZIP signature at offset 0.
+///
+/// 测试：在有效 UCX 之前拼接任意字节，应使 `open()` 因 offset 0 处
+/// 缺少 ZIP 签名而返回 `InvalidFormat`。
+#[test]
+fn test_open_rejects_prefixed_zip() {
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    // Build a valid UCX first.
+    // 先构建一个有效的 UCX。
+    let valid_path = tmp.path().join("valid.ucx");
+    create_test_ucx(&valid_path);
+    let valid_bytes = std::fs::read(&valid_path).unwrap();
+
+    // Prepend arbitrary junk bytes (not PK\x03\x04).
+    // 在开头拼接任意非 PK\x03\x04 字节。
+    let mut prefixed = Vec::new();
+    prefixed.extend_from_slice(b"JUNK-PREFIX-NOT-A-ZIP-SIGNATURE");
+    prefixed.extend_from_slice(&valid_bytes);
+
+    let prefixed_path = tmp.path().join("prefixed.ucx");
+    std::fs::write(&prefixed_path, &prefixed).unwrap();
+
+    let result = open(&prefixed_path);
+    assert!(
+        result.is_err(),
+        "open() must reject files missing ZIP signature at offset 0"
+    );
+    let err = result.unwrap_err();
+    match err {
+        ParseError::InvalidFormat(ref msg) => {
+            assert!(
+                msg.contains("ZIP signature"),
+                "error message should mention ZIP signature: {msg}"
+            );
+        }
+        other => panic!("expected InvalidFormat, got: {other:?}"),
+    }
+}
+
+/// Test: a file that is shorter than 4 bytes should be rejected with
+/// `InvalidFormat` (not a generic I/O error).
+///
+/// 测试：少于 4 字节的文件应以 `InvalidFormat`（而非通用 I/O 错误）拒绝。
+#[test]
+fn test_open_rejects_too_short_file() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("tiny.ucx");
+    std::fs::write(&path, b"PK").unwrap();
+
+    let result = open(&path);
+    assert!(result.is_err(), "tiny file must be rejected");
+    assert!(
+        matches!(result.unwrap_err(), ParseError::InvalidFormat(_)),
+        "expected InvalidFormat for too-short file"
+    );
+}
+
+/// Build a UCX archive with a custom `UCX-Version` value in its MANIFEST.MF.
+///
+/// 构建一个 MANIFEST.MF 中 `UCX-Version` 为自定义值的 UCX 归档。
+fn create_test_ucx_with_ucx_version(path: &Path, ucx_version: &str) {
+    let codex_json = test_codex_json();
+    let struct_json = test_struct_json();
+    let chapter_md = test_chapter_content();
+
+    // Build manifest text with a user-specified UCX-Version.
+    // 使用指定的 UCX-Version 构建 manifest 文本。
+    let mut mf = String::new();
+    mf.push_str("Manifest-Version: 1.0\n");
+    mf.push_str(&format!("UCX-Version: {ucx_version}\n"));
+    mf.push_str("Created-By: ucx-parse-test\n");
+    mf.push_str("Hash-Algorithm: BLAKE3\n");
+    for (name, content) in [
+        ("metadata/codex.json", codex_json.as_bytes()),
+        ("content/struct.json", struct_json.as_bytes()),
+        ("content/chapter-001.md", chapter_md.as_bytes()),
+    ] {
+        let hash = blake3::hash(content);
+        let b64 = BASE64_STANDARD.encode(hash.as_bytes());
+        mf.push('\n');
+        mf.push_str(&format!("Name: {name}\n"));
+        mf.push_str(&format!("Size: {}\n", content.len()));
+        mf.push_str(&format!("BLAKE3-Digest: {b64}\n"));
+    }
+
+    let file = std::fs::File::create(path).expect("failed to create test ZIP file");
+    let mut zip = zip::ZipWriter::new(file);
+
+    let stored_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    zip.start_file("mimetype", stored_opts).unwrap();
+    zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
+
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.write_all(mf.as_bytes()).unwrap();
+
+    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.write_all(codex_json.as_bytes()).unwrap();
+
+    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.write_all(struct_json.as_bytes()).unwrap();
+
+    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.write_all(chapter_md.as_bytes()).unwrap();
+
+    zip.finish().unwrap();
+}
+
+/// Test: a UCX whose MANIFEST declares MAJOR higher than supported must be rejected.
+///
+/// 测试：MANIFEST 中 MAJOR 高于支持值的 UCX 必须被拒绝。
+#[test]
+fn test_open_rejects_unsupported_ucx_major() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("future.ucx");
+    create_test_ucx_with_ucx_version(&path, "99.0");
+
+    let result = open(&path);
+    assert!(
+        result.is_err(),
+        "open() must reject archives with MAJOR > SUPPORTED_UCX_MAJOR"
+    );
+    match result.unwrap_err() {
+        ParseError::UnsupportedVersion(msg) => {
+            assert!(
+                msg.contains("99"),
+                "error should reference the offending MAJOR: {msg}"
+            );
+        }
+        other => panic!("expected UnsupportedVersion, got: {other:?}"),
+    }
+}
+
+/// Test: MAJOR equal to the supported value should be accepted.
+///
+/// 测试：MAJOR 等于支持值时应被接受。
+#[test]
+fn test_open_accepts_supported_ucx_major() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("v1.ucx");
+    create_test_ucx_with_ucx_version(&path, "1.5");
+
+    open(&path).expect("UCX with supported MAJOR (1.x) should be accepted");
+}
+
+/// Test: a non-numeric UCX-Version MAJOR must be rejected.
+///
+/// 测试：非数字的 UCX-Version MAJOR 必须被拒绝。
+#[test]
+fn test_open_rejects_non_numeric_ucx_version() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("bad_ver.ucx");
+    create_test_ucx_with_ucx_version(&path, "abc");
+
+    let result = open(&path);
+    assert!(result.is_err(), "non-numeric MAJOR must be rejected");
+    assert!(matches!(
+        result.unwrap_err(),
+        ParseError::UnsupportedVersion(_)
+    ));
+}
