@@ -87,7 +87,133 @@ pub fn save_private_key(key: &SigningKey, path: &Path) -> Result<(), SignError> 
     // 将 PEM 字符串写入指定文件。
     std::fs::write(path, pem_string.as_bytes())?;
 
+    // Restrict the file permissions so that only the current user can read/write.
+    // This is best-effort: failure is logged but does not abort the save —
+    // callers should treat a warning here as a security advisory.
+    //
+    // 限制文件权限为仅当前用户可读写。这是"尽力而为"：失败仅记录，不中断保存 —
+    // 调用方应将此处的警告视为安全提示。
+    if let Err(e) = restrict_private_key_permissions(path) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "failed to restrict private key permissions — key may be readable by other users"
+        );
+    }
+
     Ok(())
+}
+
+/// Restrict permissions on a private key file so that only the current user
+/// can read / write it.
+///
+/// - On Unix: `chmod 0600`.
+/// - On Windows: `icacls <path> /inheritance:r /grant:r "<CurrentUser>:(R,W)"`
+///   — breaks inheritance (so the default `Authenticated Users:M` ACE is no
+///   longer inherited) and grants only the current user Read+Write.
+///
+/// This hardens freshly-written key files. Best-effort: if the OS command
+/// fails we surface the error to the caller, but `save_private_key` treats
+/// it as a warning rather than an error.
+///
+/// 限制私钥文件权限为仅当前用户可读写。
+///
+/// - 在 Unix 上：`chmod 0600`。
+/// - 在 Windows 上：`icacls <path> /inheritance:r /grant:r "<CurrentUser>:(R,W)"`
+///   — 断开继承（使默认的 `Authenticated Users:M` 继承条目失效），并仅授予
+///   当前用户 Read+Write 权限。
+///
+/// 这项加固作用于刚写入的密钥文件。"尽力而为"：若 OS 命令失败会将错误返回
+/// 给调用方，但 `save_private_key` 将其视为警告而非错误。
+fn restrict_private_key_permissions(path: &Path) -> Result<(), SignError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // 0o600 = owner: rw, group: -, other: -
+        // 0o600 = 所有者：rw，组：-，其他：-
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, perms)?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    {
+        // Resolve the current user's principal name.
+        // The USERDOMAIN / USERNAME pair is set on all interactive Windows sessions;
+        // we fall back to %USERNAME% alone if USERDOMAIN is missing (rare).
+        //
+        // 解析当前用户的身份名。USERDOMAIN / USERNAME 在所有交互式
+        // Windows 会话中都会设置；若 USERDOMAIN 缺失（罕见）则回退到
+        // 仅使用 %USERNAME%。
+        let username = std::env::var("USERNAME").map_err(|e| {
+            SignError::Io(std::io::Error::other(format!(
+                "USERNAME env var not set: {e}"
+            )))
+        })?;
+        let principal = match std::env::var("USERDOMAIN") {
+            Ok(domain) if !domain.is_empty() => format!("{domain}\\{username}"),
+            _ => username,
+        };
+
+        // Use icacls to:
+        //   /inheritance:r      — remove all inherited ACEs (including the
+        //                         default "Authenticated Users:M" that Windows
+        //                         grants on files under %USERPROFILE%).
+        //   /grant:r "user:(R,W)" — replace (rather than add) ACEs so the
+        //                           current user gets exactly R+W.
+        //
+        // 使用 icacls：
+        //   /inheritance:r        — 移除所有继承的 ACE（包括 Windows 默认
+        //                           在 %USERPROFILE% 下文件上授予的
+        //                           "Authenticated Users:M"）。
+        //   /grant:r "user:(R,W)" — 替换（而非追加）ACE，使当前用户仅获 R+W。
+        let output = std::process::Command::new("icacls")
+            .arg(path.as_os_str())
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{principal}:(R,W)"))
+            .output()
+            .map_err(|e| {
+                SignError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to spawn icacls: {e}"),
+                ))
+            })?;
+        if !output.status.success() {
+            // Fall back to Rust's cross-platform read-only flag. It's not as
+            // strong as ACL tightening, but at least prevents accidental
+            // overwrites by the current process; the principal-set attempt
+            // above is what blocks other users.
+            //
+            // 回退到 Rust 的跨平台只读标志。它没有 ACL 收紧那么强，但至少
+            // 能阻止当前进程的意外覆盖；阻断其他用户访问靠的是上面的
+            // principal-set 尝试。
+            let mut perms = std::fs::metadata(path)?.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(true);
+            std::fs::set_permissions(path, perms)?;
+            return Err(SignError::Io(std::io::Error::other(format!(
+                "icacls returned non-zero status ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))));
+        }
+        Ok(())
+    }
+
+    // On other (non-Unix, non-Windows) targets, we can only toggle the
+    // cross-platform readonly bit — not a security control, but it prevents
+    // accidental overwrites.
+    //
+    // 在其他（非 Unix、非 Windows）目标上，我们只能切换跨平台 readonly 位 ——
+    // 这并非安全控制，但能防止意外覆盖。
+    #[cfg(not(any(unix, windows)))]
+    {
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(path, perms)?;
+        Ok(())
+    }
 }
 
 /// Load a private key from a PEM file in PKCS#8 format.
@@ -332,6 +458,69 @@ mod tests {
         assert!(
             verifying_key.verify(wrong_message, &signature).is_err(),
             "signature verification must fail for wrong message"
+        );
+    }
+
+    /// Test (Unix): save_private_key sets the file mode to 0o600.
+    /// 测试 (Unix)：save_private_key 将文件权限设为 0o600。
+    #[cfg(unix)]
+    #[test]
+    fn test_save_private_key_sets_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let tmp_dir = TempDir::new().expect("failed to create temp dir");
+        let key_path = tmp_dir.path().join("sig5.pem");
+
+        save_private_key(&signing_key, &key_path)
+            .expect("save_private_key should succeed");
+
+        let mode = std::fs::metadata(&key_path)
+            .expect("metadata should succeed")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(
+            mode, 0o600,
+            "private key file must be mode 0600 after save_private_key, got {mode:o}"
+        );
+    }
+
+    /// Test (Windows): save_private_key invokes icacls and the file remains
+    /// readable by the current user (we can load it back).
+    ///
+    /// We cannot easily assert "other users cannot read it" from within this
+    /// test process because it IS the current user. The key property we
+    /// check is: the hardening step did not corrupt the file and the current
+    /// user still has Read access.
+    ///
+    /// 测试 (Windows)：save_private_key 调用 icacls 后文件仍可被当前用户读取。
+    /// 本测试进程本身就是当前用户，无法直接断言"其他用户不能读"；我们检查的
+    /// 关键性质是：加固步骤未损坏文件，当前用户仍有 Read 权限。
+    #[cfg(windows)]
+    #[test]
+    fn test_save_private_key_current_user_can_still_read_on_windows() {
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let tmp_dir = TempDir::new().expect("failed to create temp dir");
+        let key_path = tmp_dir.path().join("sig5.pem");
+
+        save_private_key(&signing_key, &key_path)
+            .expect("save_private_key should succeed");
+
+        // The file must still exist and be readable by us.
+        // 文件应仍然存在，且可由当前用户读取。
+        assert!(key_path.exists(), "key file must exist after save");
+        let loaded = load_private_key(&key_path)
+            .expect("current user must still be able to load the key after ACL hardening");
+        assert_eq!(
+            loaded.to_bytes(),
+            signing_key.to_bytes(),
+            "loaded key must match the original"
         );
     }
 
