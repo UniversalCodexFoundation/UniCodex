@@ -156,6 +156,16 @@ pub struct InitOptions {
     /// 默认 false：仅创建 content/。
     pub full: bool,
 
+    /// Whether to overwrite an existing UCX project (unicodex.toml).
+    ///
+    /// When `true`, the existing-project check is skipped so that `init()`
+    /// can re-initialize a directory that already contains `unicodex.toml`.
+    ///
+    /// 是否覆盖已有的 UCX 项目（unicodex.toml）。
+    /// 为 `true` 时跳过已有项目检查，允许在已含 `unicodex.toml` 的目录上
+    /// 重新初始化。
+    pub force: bool,
+
     /// Whether to skip Git repository initialization.
     /// 是否跳过 Git 仓库初始化。
     /// Default false: automatically runs `git init` and creates `.gitignore`.
@@ -173,6 +183,7 @@ impl Default for InitOptions {
             author: "未知".to_string(),
             language: "zh-CN".to_string(),
             allow_long_fields: false,
+            force: false,
             full: false,
             no_git: false,
         }
@@ -194,8 +205,8 @@ impl Default for InitOptions {
 ///
 /// # Steps / 步骤
 ///
-/// 1. Check if `unicodex.toml` already exists (reject if so).
-///    检查 `unicodex.toml` 是否已存在（已存在则拒绝）。
+/// 1. Check if `unicodex.toml` already exists (reject unless `options.force`).
+///    检查 `unicodex.toml` 是否已存在（除非 `options.force` 为 true，否则拒绝）。
 /// 2. Create the project root directory if it does not exist.
 ///    如果项目根目录不存在则创建。
 /// 3. Create standard subdirectories: `content/`, `assets/`, `extras/`, `dist/`.
@@ -253,11 +264,11 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     validate_language_tag(&options.language)?;
 
     // -------------------------------------------------------------------------
-    // Step 1: Check if the project already exists.
-    // 步骤 1：检查项目是否已存在。
+    // Step 1: Check if the project already exists (skip when force == true).
+    // 步骤 1：检查项目是否已存在（force == true 时跳过）。
     // -------------------------------------------------------------------------
     let config_path = path.join(CONFIG_FILE_NAME);
-    if config_path.exists() {
+    if config_path.exists() && !options.force {
         // Return an error indicating the project already exists.
         // 返回错误，表示项目已存在。
         return Err(InitError::AlreadyExists(
@@ -448,10 +459,10 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
     validate_input(&options.author, "author", options.allow_long_fields)?;
     validate_language_tag(&options.language)?;
 
-    // Check for existing unicodex.toml.
-    // 检查已存在的 unicodex.toml。
+    // Check for existing unicodex.toml (skip when force == true).
+    // 检查已存在的 unicodex.toml（force == true 时跳过）。
     let config_path = path.join(CONFIG_FILE_NAME);
-    if config_path.exists() {
+    if config_path.exists() && !options.force {
         return Err(InitError::AlreadyExists(path.display().to_string()));
     }
 

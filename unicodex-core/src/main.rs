@@ -483,6 +483,7 @@ fn main() -> anyhow::Result<()> {
                 author: final_author,
                 language: final_language,
                 allow_long_fields,
+                force,
                 full,
                 no_git,
             };
