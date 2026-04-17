@@ -387,7 +387,32 @@ fn verify_layer2(file_data: &[u8]) -> (Option<Layer2Result>, Vec<Layer2SignerInf
         // 验证 signed_data 上的 Ed25519 签名。
         let sig_valid = verify_layer2_signature(entry);
 
-        let entry_valid = digest_matches && sig_valid;
+        // Check the certificate's validity window (notBefore / notAfter).
+        // An expired / not-yet-valid cert invalidates this signer.
+        // 检查证书有效期窗口（notBefore / notAfter）。
+        // 过期或尚未生效的证书会使该签名者失效。
+        let (cert_time_valid, cert_time_detail) =
+            match ucx_sign::cert::check_cert_validity(&entry.cert_der) {
+                Ok(ucx_sign::cert::CertValidityStatus::Valid) => (true, None),
+                Ok(ucx_sign::cert::CertValidityStatus::Expired(date)) => (
+                    false,
+                    Some(format!(
+                        "certificate expired: valid until {date}"
+                    )),
+                ),
+                Ok(ucx_sign::cert::CertValidityStatus::NotYetValid(date)) => (
+                    false,
+                    Some(format!(
+                        "certificate not yet valid: notBefore {date}"
+                    )),
+                ),
+                Err(e) => (
+                    false,
+                    Some(format!("cert validity check error: {e}")),
+                ),
+            };
+
+        let entry_valid = digest_matches && sig_valid && cert_time_valid;
         if !entry_valid {
             all_valid = false;
         }
@@ -405,9 +430,13 @@ fn verify_layer2(file_data: &[u8]) -> (Option<Layer2Result>, Vec<Layer2SignerInf
             valid: entry_valid,
         });
 
-        details_parts.push(format!(
+        let mut detail_line = format!(
             "signer[{i}]: digest_match={digest_matches}, sig_valid={sig_valid}"
-        ));
+        );
+        if let Some(extra) = cert_time_detail {
+            detail_line.push_str(&format!(", {extra}"));
+        }
+        details_parts.push(detail_line);
     }
 
     let details = format!(
@@ -685,7 +714,39 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
             }
         };
 
-        let entry_valid = digest_matches && sig_valid;
+        // Check the certificate's validity window (notBefore / notAfter).
+        // An expired or not-yet-valid cert invalidates the signer, regardless
+        // of whether the Ed25519 signature math itself is sound.
+        // 检查证书的有效期窗口（notBefore / notAfter）。
+        // 无论 Ed25519 签名运算本身是否正确，过期或尚未生效的证书都会使签名者无效。
+        let cert_validity_status =
+            match ucx_sign::cert::check_cert_validity(&cert_der) {
+                Ok(s) => s,
+                Err(e) => {
+                    all_valid = false;
+                    details_parts.push(format!(
+                        "{signer_id}: cert validity check error: {e}"
+                    ));
+                    continue;
+                }
+            };
+        let cert_time_valid = match &cert_validity_status {
+            ucx_sign::cert::CertValidityStatus::Valid => true,
+            ucx_sign::cert::CertValidityStatus::Expired(date) => {
+                details_parts.push(format!(
+                    "{signer_id}: certificate expired: valid until {date}"
+                ));
+                false
+            }
+            ucx_sign::cert::CertValidityStatus::NotYetValid(date) => {
+                details_parts.push(format!(
+                    "{signer_id}: certificate not yet valid: notBefore {date}"
+                ));
+                false
+            }
+        };
+
+        let entry_valid = digest_matches && sig_valid && cert_time_valid;
         if !entry_valid {
             all_valid = false;
         }

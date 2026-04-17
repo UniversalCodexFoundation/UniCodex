@@ -409,6 +409,107 @@ pub fn cert_validity(cert_der: &[u8]) -> Result<(String, String), SignError> {
     Ok((not_before, not_after))
 }
 
+// =============================================================================
+// Certificate validity check / 证书有效期检查
+// =============================================================================
+
+/// Result of checking whether a certificate is currently valid.
+///
+/// 检查证书当前是否有效的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CertValidityStatus {
+    /// Certificate is currently valid (now is within [notBefore, notAfter]).
+    /// 证书当前有效（当前时间位于 [notBefore, notAfter] 区间内）。
+    Valid,
+
+    /// Certificate is not yet valid — `notBefore` is in the future.
+    /// The string is a human-readable rendering of the `notBefore` date.
+    /// 证书尚未生效 — `notBefore` 在未来。字符串为 `notBefore` 日期的可读表示。
+    NotYetValid(String),
+
+    /// Certificate has expired — `notAfter` is in the past.
+    /// The string is a human-readable rendering of the `notAfter` date.
+    /// 证书已过期 — `notAfter` 在过去。字符串为 `notAfter` 日期的可读表示。
+    Expired(String),
+}
+
+impl CertValidityStatus {
+    /// Return `true` if this status represents a currently-valid certificate.
+    /// 如果此状态表示证书当前有效，则返回 `true`。
+    pub fn is_valid(&self) -> bool {
+        matches!(self, CertValidityStatus::Valid)
+    }
+}
+
+/// Check whether a DER-encoded certificate is currently valid with respect to
+/// its `notBefore` and `notAfter` fields.
+///
+/// Compares the current UTC wall-clock time (`SystemTime::now()`) against the
+/// validity window encoded in the certificate. Returns an enum variant
+/// describing the result — callers can match on it to produce precise error
+/// messages (e.g. "certificate expired: valid until YYYY-MM-DD ...").
+///
+/// 根据证书的 `notBefore` / `notAfter` 字段，检查 DER 编码的证书当前是否有效。
+/// 将当前 UTC 时钟时间（`SystemTime::now()`）与证书中编码的有效期窗口比较，
+/// 返回一个描述结果的枚举变体 — 调用者可以匹配它以生成精确的错误消息
+/// （例如 "certificate expired: valid until YYYY-MM-DD ..."）。
+///
+/// # Arguments / 参数
+///
+/// * `cert_der` - DER-encoded certificate bytes.
+///   DER 编码的证书字节。
+///
+/// # Returns / 返回
+///
+/// * `Ok(CertValidityStatus::Valid)` — certificate is currently valid.
+///   证书当前有效。
+/// * `Ok(CertValidityStatus::NotYetValid(date))` — `notBefore` is in the future.
+///   `notBefore` 在未来。
+/// * `Ok(CertValidityStatus::Expired(date))` — `notAfter` is in the past.
+///   `notAfter` 在过去。
+/// * `Err(SignError::CertificateError)` — certificate cannot be parsed, or
+///   the system clock is before the UNIX epoch.
+///   证书无法解析，或系统时钟早于 UNIX 纪元。
+pub fn check_cert_validity(cert_der: &[u8]) -> Result<CertValidityStatus, SignError> {
+    // Parse the DER-encoded certificate.
+    // 解析 DER 编码的证书。
+    let cert = x509_cert::Certificate::from_der(cert_der)
+        .map_err(|e| SignError::CertificateError(format!("failed to parse certificate DER: {e}")))?;
+
+    // Extract notBefore and notAfter as UNIX durations (seconds since epoch).
+    // 以 UNIX 时长（自纪元以来的秒数）形式提取 notBefore 和 notAfter。
+    let not_before = cert.tbs_certificate.validity.not_before.to_unix_duration();
+    let not_after = cert.tbs_certificate.validity.not_after.to_unix_duration();
+
+    // Get the current system time as a UNIX duration.
+    // 以 UNIX 时长形式获取当前系统时间。
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| {
+            SignError::CertificateError(format!(
+                "system clock is before UNIX epoch: {e}"
+            ))
+        })?;
+
+    // Compare now against the validity window.
+    // 将当前时间与有效期窗口比较。
+    if now < not_before {
+        // Certificate's notBefore is still in the future.
+        // 证书的 notBefore 仍在未来。
+        let date_str = format!("{}", cert.tbs_certificate.validity.not_before);
+        Ok(CertValidityStatus::NotYetValid(date_str))
+    } else if now > not_after {
+        // Certificate's notAfter is in the past — it has expired.
+        // 证书的 notAfter 在过去 — 已过期。
+        let date_str = format!("{}", cert.tbs_certificate.validity.not_after);
+        Ok(CertValidityStatus::Expired(date_str))
+    } else {
+        // Current time is within the validity window.
+        // 当前时间位于有效期窗口内。
+        Ok(CertValidityStatus::Valid)
+    }
+}
+
 /// Extract the public key algorithm name from a DER-encoded certificate.
 /// Returns a human-readable algorithm name such as "Ed25519", "ECDSA", or the raw OID.
 ///
@@ -731,6 +832,144 @@ mod tests {
         // not_before and not_after should be different (365 days apart).
         // not_before 和 not_after 应不同（相隔 365 天）。
         assert_ne!(not_before, not_after, "not_before and not_after must differ");
+    }
+
+    /// Test: check_cert_validity returns Valid for a freshly created certificate.
+    /// 测试：check_cert_validity 对新创建的证书返回 Valid。
+    #[test]
+    fn test_check_cert_validity_returns_valid_for_fresh_cert() {
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let options = CertOptions {
+            common_name: "Validity Check Test".to_string(),
+            days_valid: 365,
+            organization: None,
+        };
+
+        let cert_der = create_self_signed_cert(&signing_key, &options)
+            .expect("certificate generation should succeed");
+
+        let status = check_cert_validity(&cert_der)
+            .expect("check_cert_validity should succeed");
+
+        assert_eq!(
+            status,
+            CertValidityStatus::Valid,
+            "freshly created certificate must be currently valid"
+        );
+        assert!(status.is_valid(), "is_valid() must be true for Valid status");
+    }
+
+    /// Test: check_cert_validity returns Expired for a certificate whose
+    /// notAfter has been forced into the past.
+    ///
+    /// 测试：对 notAfter 已被人为设为过去的证书，check_cert_validity 返回 Expired。
+    #[test]
+    fn test_check_cert_validity_detects_expired() {
+        // Rather than generate a naturally-expired certificate (which would
+        // require time travel), build a cert whose notBefore and notAfter are
+        // both in the past using rcgen directly.
+        // 与其生成自然过期的证书（需要时间旅行），不如用 rcgen 直接构造
+        // 一个 notBefore 和 notAfter 都在过去的证书。
+        use pkcs8::EncodePrivateKey;
+        use rustls_pki_types::PrivatePkcs8KeyDer;
+
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("PKCS#8 encoding should succeed");
+        let pkcs8_key_der = PrivatePkcs8KeyDer::from(pkcs8_der.as_bytes().to_vec());
+        let rcgen_key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+            &pkcs8_key_der,
+            &rcgen::PKCS_ED25519,
+        )
+        .expect("rcgen keypair should succeed");
+
+        let mut params = rcgen::CertificateParams::default();
+        let mut dn = rcgen::DistinguishedName::new();
+        dn.push(rcgen::DnType::CommonName, "Expired Test");
+        params.distinguished_name = dn;
+
+        // Both notBefore and notAfter are in the past — the certificate has expired.
+        // notBefore 和 notAfter 都在过去 — 证书已过期。
+        let now = time::OffsetDateTime::now_utc();
+        params.not_before = now - time::Duration::days(30);
+        params.not_after = now - time::Duration::days(1);
+
+        params.is_ca = rcgen::IsCa::NoCa;
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
+
+        let cert = params
+            .self_signed(&rcgen_key_pair)
+            .expect("self_signed should succeed");
+        let cert_der = cert.der().to_vec();
+
+        let status = check_cert_validity(&cert_der)
+            .expect("check_cert_validity should succeed");
+
+        match status {
+            CertValidityStatus::Expired(_) => { /* expected */ }
+            other => panic!(
+                "expected CertValidityStatus::Expired, got: {other:?}"
+            ),
+        }
+    }
+
+    /// Test: check_cert_validity returns NotYetValid for a certificate whose
+    /// notBefore has been set into the future.
+    ///
+    /// 测试：对 notBefore 被设为未来时间的证书，check_cert_validity 返回 NotYetValid。
+    #[test]
+    fn test_check_cert_validity_detects_not_yet_valid() {
+        use pkcs8::EncodePrivateKey;
+        use rustls_pki_types::PrivatePkcs8KeyDer;
+
+        let (signing_key, _) = generate_ed25519_keypair()
+            .expect("key generation should succeed");
+
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("PKCS#8 encoding should succeed");
+        let pkcs8_key_der = PrivatePkcs8KeyDer::from(pkcs8_der.as_bytes().to_vec());
+        let rcgen_key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+            &pkcs8_key_der,
+            &rcgen::PKCS_ED25519,
+        )
+        .expect("rcgen keypair should succeed");
+
+        let mut params = rcgen::CertificateParams::default();
+        let mut dn = rcgen::DistinguishedName::new();
+        dn.push(rcgen::DnType::CommonName, "Future Test");
+        params.distinguished_name = dn;
+
+        // notBefore is 1 day in the future — certificate is not yet valid.
+        // notBefore 在未来 1 天 — 证书尚未生效。
+        let now = time::OffsetDateTime::now_utc();
+        params.not_before = now + time::Duration::days(1);
+        params.not_after = now + time::Duration::days(30);
+
+        params.is_ca = rcgen::IsCa::NoCa;
+        params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
+
+        let cert = params
+            .self_signed(&rcgen_key_pair)
+            .expect("self_signed should succeed");
+        let cert_der = cert.der().to_vec();
+
+        let status = check_cert_validity(&cert_der)
+            .expect("check_cert_validity should succeed");
+
+        match status {
+            CertValidityStatus::NotYetValid(_) => { /* expected */ }
+            other => panic!(
+                "expected CertValidityStatus::NotYetValid, got: {other:?}"
+            ),
+        }
     }
 
     /// Test: cert_algorithm returns "Ed25519" for Ed25519 certificates.
