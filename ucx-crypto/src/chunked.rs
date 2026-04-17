@@ -2,15 +2,29 @@
 //! 大文件分块加密（>64 MiB）。
 //!
 //! When a file exceeds 64 MiB, it is split into 1 MiB chunks,
-//! each encrypted independently with a derived nonce:
-//!   nonce = base_nonce XOR uint96_le(chunk_index)
+//! each encrypted independently with a derived nonce built by CONCATENATION:
+//!   nonce = base_nonce[0..8] || chunk_index.to_be_bytes()   (12 B total)
+//!
+//! The concatenation scheme replaces the previous XOR-based derivation
+//! (`base XOR uint96_le(chunk_index)`) which was vulnerable to nonce-collision
+//! attacks: an attacker able to influence the 96-bit base_nonce could force
+//! two different (key, chunk_index) pairs to share the same final nonce,
+//! breaking the AEAD uniqueness requirement. Concatenation makes collisions
+//! impossible for distinct chunk_index values (the low 4 bytes are disjoint
+//! from the high 8 bytes).
 //!
 //! Only AEAD algorithms (AES-256-GCM and ChaCha20-Poly1305) are supported.
 //! AES-256-CBC is NOT supported for chunked encryption because CBC mode
 //! does not provide built-in per-chunk authentication.
 //!
 //! 当文件超过 64 MiB 时，按 1 MiB 分块，每块独立加密，
-//! 使用派生 nonce：nonce = base_nonce XOR uint96_le(chunk_index)。
+//! 使用**拼接式** nonce：
+//!   nonce = base_nonce[0..8] || chunk_index.to_be_bytes()（共 12 B）。
+//!
+//! 拼接式取代了旧的 XOR 派生（`base XOR uint96_le(chunk_index)`）：
+//! 旧方案下，如果攻击者能影响 96 位 base_nonce，就可以让两对不同的
+//! (key, chunk_index) 产生相同的最终 nonce，破坏 AEAD 的唯一性要求。
+//! 改为拼接式后，不同 chunk_index 间不可能产生碰撞。
 //!
 //! 仅支持 AEAD 算法（AES-256-GCM 和 ChaCha20-Poly1305）。
 //! 不支持 AES-256-CBC 分块加密，因为 CBC 模式不提供内建的逐块认证。
@@ -70,19 +84,30 @@ pub struct ChunkedCiphertext {
 // Internal helpers / 内部辅助函数
 // =============================================================================
 
-/// Compute chunk-specific nonce: base_nonce XOR uint96_le(chunk_index).
-/// 计算分块专用 nonce：base_nonce XOR uint96_le(chunk_index)。
+/// Compute chunk-specific nonce by CONCATENATION:
+/// `nonce = base_nonce[0..8] || chunk_index.to_be_bytes()` (12 B total).
 ///
-/// Only the low 4 bytes are XORed, which supports up to 2^32 chunks (= 4 PiB).
-/// 仅对低 4 字节执行 XOR，支持最多 2^32 个分块（= 4 PiB）。
+/// Using concatenation rather than XOR guarantees that distinct chunk_index
+/// values produce distinct nonces, eliminating the nonce-collision attack
+/// surface that an attacker could exploit by choosing the base_nonce.
+///
+/// Supports up to 2^32 chunks (the full 4-byte BE counter), i.e. 4 PiB per file.
+///
+/// 以**拼接**方式计算分块专用 nonce：
+/// `nonce = base_nonce[0..8] || chunk_index.to_be_bytes()`（共 12 B）。
+///
+/// 相比 XOR，拼接能保证不同 chunk_index 必然产生不同 nonce，
+/// 从而消除攻击者通过选择 base_nonce 构造 nonce 碰撞的攻击面。
+///
+/// 支持最多 2^32 个分块（4 字节 BE 计数器），即单文件 4 PiB。
 fn derive_chunk_nonce(base_nonce: &[u8; 12], chunk_index: u32) -> [u8; 12] {
-    let mut nonce = *base_nonce;
-    let index_bytes = chunk_index.to_le_bytes(); // 4 bytes, little-endian
-    // XOR the low 4 bytes of the nonce with the chunk index.
-    // 将 nonce 的低 4 字节与 chunk index 进行 XOR。
-    for i in 0..4 {
-        nonce[i] ^= index_bytes[i];
-    }
+    let mut nonce = [0u8; 12];
+    // High 8 bytes: randomly-generated base nonce prefix (per-file unique).
+    // 高 8 字节：随机生成的文件级 base nonce 前缀。
+    nonce[0..8].copy_from_slice(&base_nonce[0..8]);
+    // Low 4 bytes: big-endian chunk counter (monotonically increasing).
+    // 低 4 字节：大端序的分块计数器（单调递增）。
+    nonce[8..12].copy_from_slice(&chunk_index.to_be_bytes());
     nonce
 }
 
@@ -466,40 +491,54 @@ pub fn deserialize_chunks(
 mod tests {
     use super::*;
 
-    /// Test nonce derivation: index 0 should return base_nonce unchanged,
-    /// index > 0 should XOR the low bytes.
-    /// 测试 nonce 派生：index 0 应返回不变的 base_nonce，
-    /// index > 0 应对低位字节执行 XOR。
+    /// Test concatenation-based nonce derivation.
+    ///
+    /// Layout: high 8 bytes = base_nonce[0..8], low 4 bytes = index.to_be_bytes().
+    /// 布局：高 8 字节 = base_nonce[0..8]，低 4 字节 = chunk_index 大端序。
     #[test]
     fn test_derive_chunk_nonce() {
+        // All-zero base: only the low 4 bytes (counter) should change per index.
+        // base 全零：每个 index 只改变低 4 字节（计数器）。
         let base = [0x00u8; 12];
 
-        // Index 0: nonce should equal base_nonce (XOR with 0 is identity).
-        // 索引 0：nonce 应等于 base_nonce（与 0 异或为恒等运算）。
+        // Index 0 → nonce is all zero (counter bytes = 0x00000000).
+        // 索引 0 → nonce 全零（计数器 = 0x00000000）。
         let n0 = derive_chunk_nonce(&base, 0);
         assert_eq!(n0, base);
 
-        // Index 1: low byte should be 0x01.
-        // 索引 1：低位字节应为 0x01。
+        // Index 1 → last byte is 0x01 (big-endian counter: 00 00 00 01).
+        // 索引 1 → 最后一字节为 0x01（大端序计数器）。
         let n1 = derive_chunk_nonce(&base, 1);
-        assert_eq!(n1[0], 0x01);
-        assert_eq!(n1[1..], [0u8; 11]);
+        assert_eq!(n1[0..8], [0u8; 8]);
+        assert_eq!(n1[8..12], [0x00, 0x00, 0x00, 0x01]);
 
-        // Index 256: second byte should be 0x01 (little-endian).
-        // 索引 256：第二个字节应为 0x01（小端序）。
+        // Index 256 → counter bytes = 00 00 01 00 (big-endian).
+        // 索引 256 → 计数器字节 = 00 00 01 00（大端）。
         let n256 = derive_chunk_nonce(&base, 256);
-        assert_eq!(n256[0], 0x00);
-        assert_eq!(n256[1], 0x01);
+        assert_eq!(n256[8..12], [0x00, 0x00, 0x01, 0x00]);
 
-        // Verify XOR with non-zero base nonce.
-        // 验证与非零 base nonce 的 XOR。
-        let base2 = [0xFF, 0x00, 0xAA, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        // Non-zero base: high 8 bytes are preserved verbatim; low 4 bytes carry the counter.
+        // 非零 base：高 8 字节原样保留，低 4 字节为计数器。
+        let base2 = [0xFF, 0x00, 0xAA, 0x55, 0x11, 0x22, 0x33, 0x44, 0xAB, 0xCD, 0xEF, 0x01];
         let n1_b2 = derive_chunk_nonce(&base2, 1);
-        // 0xFF XOR 0x01 = 0xFE
-        assert_eq!(n1_b2[0], 0xFE);
-        assert_eq!(n1_b2[1], 0x00);
-        assert_eq!(n1_b2[2], 0xAA);
-        assert_eq!(n1_b2[3], 0x55);
+        assert_eq!(n1_b2[0..8], base2[0..8]);
+        assert_eq!(n1_b2[8..12], [0x00, 0x00, 0x00, 0x01]);
+
+        // Index u32::MAX → counter bytes all 0xFF.
+        // 索引 u32::MAX → 计数器字节全 0xFF。
+        let n_max = derive_chunk_nonce(&base2, u32::MAX);
+        assert_eq!(n_max[8..12], [0xFF, 0xFF, 0xFF, 0xFF]);
+        // High 8 bytes still untouched.
+        // 高 8 字节不变。
+        assert_eq!(n_max[0..8], base2[0..8]);
+
+        // Different chunk indices must produce different nonces (no collisions).
+        // 不同 chunk_index 必须产生不同 nonce（无碰撞）。
+        assert_ne!(derive_chunk_nonce(&base2, 0), derive_chunk_nonce(&base2, 1));
+        assert_ne!(
+            derive_chunk_nonce(&base2, 0xDEADBEEF),
+            derive_chunk_nonce(&base2, 0xCAFEBABE)
+        );
     }
 
     /// Small file (less than CHUNK_SIZE): should produce exactly 1 chunk.
