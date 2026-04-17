@@ -9,8 +9,13 @@
 //!
 //! ## Security notes / 安全说明
 //!
-//! - HMAC is computed over `iv || ciphertext` to prevent IV manipulation.
-//!   HMAC 对 `iv || ciphertext` 计算，防止 IV 被篡改。
+//! - HMAC is computed over `aad || iv || ciphertext`. Including the `aad`
+//!   (typically the UCXE header bytes) prevents both IV-manipulation and
+//!   header-byte-swap attacks: an attacker cannot change the algorithm ID
+//!   or KDF ID in transit without breaking the MAC.
+//!   HMAC 对 `aad || iv || ciphertext` 计算。包含 `aad`（通常为 UCXE 头部
+//!   字节）同时防御 IV 篡改与头部字节交换攻击 —— 攻击者无法在不破坏
+//!   MAC 的前提下修改算法 ID 或 KDF ID。
 //! - Decryption always verifies HMAC **before** decrypting to prevent
 //!   Padding Oracle attacks.
 //!   解密时始终**先验证 HMAC 再解密**，以防止 Padding Oracle 攻击。
@@ -89,6 +94,7 @@ pub fn encrypt(
     enc_key: &[u8; 32],
     mac_key: &[u8; 32],
     plaintext: &[u8],
+    aad: &[u8],
 ) -> Result<EncryptResult, CryptoError> {
     // 1. Generate a random 16-byte IV using CSPRNG.
     //    使用 CSPRNG 生成随机 16 字节 IV。
@@ -100,10 +106,13 @@ pub fn encrypt(
     let ciphertext = Aes256CbcEnc::new(enc_key.into(), &iv.into())
         .encrypt_padded_vec::<Pkcs7>(plaintext);
 
-    // 3. Compute HMAC-SHA256 over (iv || ciphertext) for Encrypt-then-MAC.
-    //    对 (iv || ciphertext) 计算 HMAC-SHA256（Encrypt-then-MAC）。
+    // 3. Compute HMAC-SHA256 over (aad || iv || ciphertext). Including the
+    //    aad covers the UCXE header so header-byte swaps are detected.
+    //    对 (aad || iv || ciphertext) 计算 HMAC-SHA256。将 aad 纳入覆盖
+    //    UCXE 头部，从而可检测头部字节交换攻击。
     let mut mac = HmacSha256::new_from_slice(mac_key)
         .expect("HMAC accepts any key size");
+    mac.update(aad);
     mac.update(&iv);
     mac.update(&ciphertext);
     let hmac_result = mac.finalize().into_bytes();
@@ -148,11 +157,13 @@ pub fn decrypt(
     iv: &[u8; 16],
     ciphertext: &[u8],
     hmac_tag: &[u8; 32],
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    // 1. Verify HMAC FIRST (before any decryption) to prevent Padding Oracle.
-    //    首先验证 HMAC（在任何解密之前），防止 Padding Oracle。
+    // 1. Verify HMAC FIRST over (aad || iv || ciphertext) before any decrypt.
+    //    首先对 (aad || iv || ciphertext) 验证 HMAC，再进行解密。
     let mut mac = HmacSha256::new_from_slice(mac_key)
         .expect("HMAC accepts any key size");
+    mac.update(aad);
     mac.update(iv);
     mac.update(ciphertext);
 
@@ -184,8 +195,8 @@ mod tests {
         let mac_key = [0x43u8; 32];
         let plaintext = b"Hello, AES-256-CBC + HMAC-SHA256!";
 
-        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
-        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag).unwrap();
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
+        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"").unwrap();
 
         assert_eq!(decrypted, plaintext);
     }
@@ -199,7 +210,7 @@ mod tests {
         let wrong_enc_key = [0x99u8; 32];
         let plaintext = b"secret data";
 
-        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
 
         // HMAC was computed with the correct mac_key, but enc_key is wrong.
         // The HMAC should still pass (it's independent of enc_key),
@@ -207,7 +218,7 @@ mod tests {
         // HMAC 使用了正确的 mac_key 计算，但 enc_key 是错误的。
         // HMAC 仍应通过（它与 enc_key 无关），
         // 但解密结果将是乱码，去填充将失败。
-        let result = decrypt(&wrong_enc_key, &mac_key, &iv, &ciphertext, &hmac_tag);
+        let result = decrypt(&wrong_enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"");
         assert!(matches!(
             result.unwrap_err(),
             CryptoError::AuthenticationFailed
@@ -222,13 +233,13 @@ mod tests {
         let mac_key = [0x43u8; 32];
         let plaintext = b"tamper test data";
 
-        let (ciphertext, iv, mut hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+        let (ciphertext, iv, mut hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
 
         // Flip one bit in the HMAC tag.
         // 翻转 HMAC 标签中的一个比特。
         hmac_tag[0] ^= 0x01;
 
-        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag);
+        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"");
         assert!(matches!(
             result.unwrap_err(),
             CryptoError::AuthenticationFailed
@@ -243,14 +254,14 @@ mod tests {
         let mac_key = [0x43u8; 32];
         let plaintext = b"";
 
-        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
 
         // Even empty plaintext produces ciphertext due to PKCS#7 padding
         // (one full block of padding).
         // 即使是空明文，由于 PKCS#7 填充也会产生密文（一整块填充）。
         assert!(!ciphertext.is_empty());
 
-        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag).unwrap();
+        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"").unwrap();
         assert!(decrypted.is_empty());
     }
 
@@ -262,13 +273,13 @@ mod tests {
         let mac_key = [0x43u8; 32];
         let plaintext = b"ciphertext tamper test";
 
-        let (mut ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+        let (mut ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
 
         // Flip one bit in the ciphertext body (not the HMAC tag).
         // 翻转密文主体中的一个比特（不是 HMAC 标签）。
         ciphertext[0] ^= 0x01;
 
-        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag);
+        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"");
         assert!(matches!(
             result.unwrap_err(),
             CryptoError::AuthenticationFailed
@@ -284,11 +295,11 @@ mod tests {
         let wrong_mac_key = [0x99u8; 32];
         let plaintext = b"mac key test data";
 
-        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext).unwrap();
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, plaintext, b"").unwrap();
 
         // Decrypt with incorrect mac_key — HMAC verification should fail.
         // 使用错误的 mac_key 解密 —— HMAC 验证应失败。
-        let result = decrypt(&enc_key, &wrong_mac_key, &iv, &ciphertext, &hmac_tag);
+        let result = decrypt(&enc_key, &wrong_mac_key, &iv, &ciphertext, &hmac_tag, b"");
         assert!(matches!(
             result.unwrap_err(),
             CryptoError::AuthenticationFailed
@@ -303,9 +314,34 @@ mod tests {
         let mac_key = [0x43u8; 32];
         let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
 
-        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, &plaintext).unwrap();
-        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag).unwrap();
+        let (ciphertext, iv, hmac_tag) = encrypt(&enc_key, &mac_key, &plaintext, b"").unwrap();
+        let decrypted = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"").unwrap();
 
         assert_eq!(decrypted, plaintext);
+    }
+
+    /// AAD mismatch between encrypt and decrypt must fail HMAC verification.
+    /// 加密与解密 AAD 不一致必须导致 HMAC 验证失败。
+    #[test]
+    fn aad_mismatch_fails() {
+        let enc_key = [0x42u8; 32];
+        let mac_key = [0x43u8; 32];
+        let plaintext = b"aad bound to HMAC";
+
+        let (ciphertext, iv, hmac_tag) =
+            encrypt(&enc_key, &mac_key, plaintext, b"header-A").unwrap();
+
+        // Same key/IV/tag/ciphertext but different AAD must be rejected.
+        // 相同的 key/IV/tag/密文 但 AAD 不同必须被拒绝。
+        let result = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"header-B");
+        assert!(matches!(
+            result.unwrap_err(),
+            CryptoError::AuthenticationFailed
+        ));
+
+        // Same AAD succeeds.
+        // 相同 AAD 必须成功。
+        let ok = decrypt(&enc_key, &mac_key, &iv, &ciphertext, &hmac_tag, b"header-A").unwrap();
+        assert_eq!(ok, plaintext);
     }
 }

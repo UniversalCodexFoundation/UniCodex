@@ -672,15 +672,21 @@ fn encrypt_aes_cbc_to_ucxe(
         })?,
     );
 
-    let (ciphertext, iv, hmac_tag) = aes_cbc::encrypt(&enc_key, &mac_key, plaintext)?;
+    // Build header first so we can pass its serialized bytes as HMAC AAD.
+    // 先构建 header，以便把其序列化字节作为 HMAC 的 AAD。
+    let header = format::UcxeHeader {
+        format_version: UCXE_FORMAT_VERSION,
+        algorithm: Algorithm::Aes256Cbc,
+        kdf: kdf_type,
+        chunked: false,
+    };
+    let aad = header.to_bytes();
+
+    let (ciphertext, iv, hmac_tag) =
+        aes_cbc::encrypt(&enc_key, &mac_key, plaintext, &aad)?;
 
     Ok(format::UcxeFile {
-        header: format::UcxeHeader {
-            format_version: UCXE_FORMAT_VERSION,
-            algorithm: Algorithm::Aes256Cbc,
-            kdf: kdf_type,
-            chunked: false,
-        },
+        header,
         kdf_params: kdf_params.clone(),
         salt: salt.to_vec(),
         iv: iv.to_vec(),
@@ -779,7 +785,12 @@ fn decrypt_aes_cbc_payload(
         CryptoError::InvalidFormat("AES-CBC HMAC tag must be 32 bytes".into())
     })?;
 
-    aes_cbc::decrypt(&enc_key, &mac_key, &iv, &ucxe.ciphertext, &hmac_tag)
+    // Recompute AAD from the parsed header so HMAC verification also covers
+    // the UCXE header bytes; any header tamper → MAC mismatch.
+    // 从解析出的 header 重建 AAD，使 HMAC 同时覆盖 UCXE 头部；
+    // 头部任一字节被篡改都会导致 MAC 校验失败。
+    let aad = ucxe.header.to_bytes();
+    aes_cbc::decrypt(&enc_key, &mac_key, &iv, &ucxe.ciphertext, &hmac_tag, &aad)
 }
 
 /// Check if a file is UCXE encrypted by examining its magic number.
