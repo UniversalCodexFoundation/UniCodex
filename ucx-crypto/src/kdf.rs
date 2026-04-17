@@ -536,6 +536,113 @@ mod tests {
         assert_ne!(salt_a, salt_b, "two random salts should differ");
     }
 
+    /// Weak Argon2id params must be rejected by `validate_kdf_params`.
+    /// 弱 Argon2id 参数必须被 `validate_kdf_params` 拒绝。
+    #[test]
+    fn test_validate_rejects_weak_argon2id() {
+        // Memory below OWASP 2023 minimum → reject.
+        // 内存低于 OWASP 2023 最低要求 → 拒绝。
+        let weak = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: 1024,
+            time_cost: 3,
+            parallelism: 1,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Argon2id, &weak),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+
+        // Time cost below minimum → reject.
+        // time_cost 低于下限 → 拒绝。
+        let weak_t = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: 1,
+            parallelism: 1,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Argon2id, &weak_t),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+    }
+
+    /// Extreme / out-of-range Argon2id params must be rejected.
+    /// 极端（过大）Argon2id 参数必须被拒绝。
+    #[test]
+    fn test_validate_rejects_extreme_argon2id() {
+        // Memory above hard cap → reject.
+        // 内存超过硬上限 → 拒绝。
+        let huge_m = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MAX_MEMORY_KIB + 1,
+            time_cost: 3,
+            parallelism: 1,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Argon2id, &huge_m),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+
+        // Time cost above hard cap → reject.
+        // time_cost 超过硬上限 → 拒绝。
+        let huge_t = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: ARGON2ID_MAX_TIME_COST + 1,
+            parallelism: 1,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Argon2id, &huge_t),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+    }
+
+    /// Weak / extreme PBKDF2 iterations must be rejected.
+    /// 弱 / 极端 PBKDF2 迭代次数必须被拒绝。
+    #[test]
+    fn test_validate_rejects_weak_and_extreme_pbkdf2() {
+        let weak = crate::format::KdfParams::Pbkdf2 { iterations: 1_000 };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Pbkdf2HmacSha256, &weak),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+
+        let huge = crate::format::KdfParams::Pbkdf2 {
+            iterations: PBKDF2_MAX_ITERATIONS + 1,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Pbkdf2HmacSha256, &huge),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+    }
+
+    /// Sane Argon2id and PBKDF2 params must pass validation.
+    /// 合理的 Argon2id 与 PBKDF2 参数必须通过校验。
+    #[test]
+    fn test_validate_accepts_sane_params() {
+        let argon = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: ARGON2ID_MIN_TIME_COST,
+            parallelism: 1,
+        };
+        assert!(validate_kdf_params(crate::Kdf::Argon2id, &argon).is_ok());
+
+        let pbkdf2 = crate::format::KdfParams::Pbkdf2 {
+            iterations: PBKDF2_MIN_ITERATIONS,
+        };
+        assert!(validate_kdf_params(crate::Kdf::Pbkdf2HmacSha256, &pbkdf2).is_ok());
+    }
+
+    /// Mismatched KDF id and params variant must be rejected.
+    /// KDF ID 与参数变体不一致必须被拒绝。
+    #[test]
+    fn test_validate_rejects_variant_mismatch() {
+        let argon_params = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: ARGON2ID_MIN_TIME_COST,
+            parallelism: 1,
+        };
+        let result = validate_kdf_params(crate::Kdf::Pbkdf2HmacSha256, &argon_params);
+        assert!(matches!(result, Err(CryptoError::WeakKdfParameters(_))));
+    }
+
     /// derive_key() with output_len=64 should return 64 bytes.
     /// derive_key() 设置 output_len=64 时应返回 64 字节。
     #[test]
