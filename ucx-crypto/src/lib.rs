@@ -357,6 +357,25 @@ pub fn decrypt(
     source: &Path,
     key: &[u8; 32],
 ) -> Result<Vec<u8>, CryptoError> {
+    // I/O errors surface as-is (they reflect the caller's environment, not a
+    // ciphertext-content issue). All cryptographic / parsing errors collapse
+    // into the opaque `DecryptionFailed` variant so attackers cannot learn
+    // whether it was a wrong key, a tampered ciphertext, or a malformed file.
+    //
+    // I/O 错误按原样上报（反映调用方环境问题）；加密 / 解析相关错误统一
+    // 塌缩为不透明的 `DecryptionFailed`，避免通过错误文本泄漏是密钥错、
+    // 密文被篡改还是格式错误。
+    decrypt_internal(source, key).map_err(CryptoError::into_public_decrypt_error)
+}
+
+/// Internal implementation of `decrypt` that returns the real error kind.
+/// Kept private so callers cannot depend on the exact error discrimination.
+///
+/// 内部实现，返回真实错误类型；保持私有，使外部调用方无法依赖具体错误变体。
+fn decrypt_internal(
+    source: &Path,
+    key: &[u8; 32],
+) -> Result<Vec<u8>, CryptoError> {
     // Step 1: Read the UCXE file bytes.
     // 第 1 步：读取 UCXE 文件字节。
     let data = std::fs::read(source)?;
@@ -493,6 +512,19 @@ fn encrypt_with_passphrase_and_params(
 /// Returns the decrypted plaintext bytes, or a `CryptoError` on failure.
 /// 返回解密后的明文字节，或在失败时返回 `CryptoError`。
 pub fn decrypt_with_passphrase(
+    source: &Path,
+    passphrase: &str,
+) -> Result<Vec<u8>, CryptoError> {
+    // Public API: collapse all crypto/parsing errors to `DecryptionFailed`.
+    // I/O errors are preserved.
+    // 公开 API：将所有加密/解析错误统一塌缩为 `DecryptionFailed`；I/O 错误保留。
+    decrypt_with_passphrase_internal(source, passphrase)
+        .map_err(CryptoError::into_public_decrypt_error)
+}
+
+/// Internal implementation of `decrypt_with_passphrase`.
+/// 内部实现 —— 保留真实错误类型供本 crate 内部诊断使用。
+fn decrypt_with_passphrase_internal(
     source: &Path,
     passphrase: &str,
 ) -> Result<Vec<u8>, CryptoError> {
@@ -974,8 +1006,10 @@ mod tests {
         assert_eq!(decrypted, plaintext);
     }
 
-    /// Test 5: Wrong key should fail decryption.
-    /// 测试 5：错误密钥应导致解密失败。
+    /// Test 5: Wrong key should fail with the opaque `DecryptionFailed` error
+    /// whose display text is exactly `"decryption failed"` (no variant leakage).
+    /// 测试 5：错误密钥应返回不透明的 `DecryptionFailed`，显示文本恰好为
+    /// `"decryption failed"`（不泄漏错误类别）。
     #[test]
     fn test_wrong_key_fails() {
         let key = [0x42u8; 32];
@@ -986,7 +1020,12 @@ mod tests {
         encrypt(&src, &dst, &key, Algorithm::Aes256Gcm).expect("encrypt should succeed");
 
         let result = decrypt(&dst, &wrong_key);
-        assert!(result.is_err(), "wrong key should fail decryption");
+        let err = result.expect_err("wrong key must fail decryption");
+        assert!(
+            matches!(err, CryptoError::DecryptionFailed),
+            "public decrypt API must return opaque DecryptionFailed, got: {err:?}"
+        );
+        assert_eq!(format!("{err}"), "decryption failed");
     }
 
     /// Test 6: Wrong passphrase should fail decryption.
@@ -1005,7 +1044,12 @@ mod tests {
         .expect("encrypt should succeed");
 
         let result = decrypt_with_passphrase(&dst, "wrong-passphrase");
-        assert!(result.is_err(), "wrong passphrase should fail decryption");
+        let err = result.expect_err("wrong passphrase must fail decryption");
+        assert!(
+            matches!(err, CryptoError::DecryptionFailed),
+            "public API must return opaque DecryptionFailed, got: {err:?}"
+        );
+        assert_eq!(format!("{err}"), "decryption failed");
     }
 
     /// Test 7: AES-256-CBC direct key mode should be rejected.
@@ -1104,8 +1148,8 @@ mod tests {
 
         let result = decrypt_with_passphrase(&dst, "kdf-aad-passphrase");
         assert!(
-            matches!(result, Err(CryptoError::AuthenticationFailed)),
-            "tampered KDF params must fail AEAD authentication, got: {result:?}"
+            matches!(result, Err(CryptoError::DecryptionFailed)),
+            "tampered KDF params must fail decryption (opaque DecryptionFailed), got: {result:?}"
         );
     }
 
@@ -1143,8 +1187,8 @@ mod tests {
 
         let result = decrypt_with_passphrase(&dst, "salt-aad-passphrase");
         assert!(
-            matches!(result, Err(CryptoError::AuthenticationFailed)),
-            "tampered salt must fail AEAD authentication, got: {result:?}"
+            matches!(result, Err(CryptoError::DecryptionFailed)),
+            "tampered salt must fail decryption (opaque DecryptionFailed), got: {result:?}"
         );
     }
 }
