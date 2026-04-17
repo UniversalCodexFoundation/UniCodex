@@ -265,6 +265,17 @@ enum Commands {
         /// 口令模式的 KDF 算法。
         #[arg(long, default_value = "argon2id")]
         kdf: String,
+
+        /// Allow passphrases shorter than 8 characters.
+        ///
+        /// By default the CLI refuses weak passphrases (<8 chars) to prevent
+        /// trivially brute-forceable encryption. This flag opts out of the check.
+        ///
+        /// 允许长度小于 8 字符的弱口令。
+        /// 默认 CLI 拒绝弱口令（<8 字符）以防止轻易被暴力破解；
+        /// 此标志可跳过此检查。
+        #[arg(long, default_value_t = false)]
+        allow_weak: bool,
     },
 
     /// Decrypt a UCXE encrypted file.
@@ -931,7 +942,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Version { action, path } => {
             handle_version_command(action, &path)?;
         }
-        Commands::Encrypt { file, output, algorithm, key, passphrase, kdf } => {
+        Commands::Encrypt { file, output, algorithm, key, passphrase, kdf, allow_weak } => {
             // 解析加密算法 / Parse the encryption algorithm.
             let algo = match algorithm.as_str() {
                 "AES-256-GCM" | "aes-256-gcm" => ucx_crypto::Algorithm::Aes256Gcm,
@@ -953,6 +964,19 @@ fn main() -> anyhow::Result<()> {
                 };
                 eprint!("Enter passphrase: ");
                 let pass = read_passphrase()?;
+
+                // DOC-3: enforce minimum passphrase length unless --allow-weak.
+                // Counting chars() (Unicode scalar values) is strict enough for
+                // interactive use; bytes would over-count multi-byte scripts.
+                // DOC-3：未使用 --allow-weak 时强制最小口令长度。
+                // 使用 chars() 计数（Unicode 标量值），对交互输入足够严格；
+                // 字节计数会让多字节文字虚高。
+                if !allow_weak && pass.chars().count() < 8 {
+                    anyhow::bail!(
+                        "passphrase must be at least 8 characters; use --allow-weak to override"
+                    );
+                }
+
                 ucx_crypto::encrypt_with_passphrase(&file, dest, &pass, algo, kdf_type)?;
                 println!("File encrypted: {}", dest.display());
                 println!("  Algorithm: {algorithm}");
