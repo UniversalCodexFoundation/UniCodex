@@ -69,11 +69,28 @@ pub struct UcxeHeader {
     pub kdf: Kdf,
 
     /// Whether the ciphertext uses chunked encryption.
-    /// Stored in the reserved byte: 0x00 = normal, 0x01 = chunked.
+    /// Stored in the flags byte (offset 7): bit 0 = chunked.
     ///
     /// 密文是否使用了分块加密。
-    /// 存储在保留字节中：0x00 = 普通模式，0x01 = 分块模式。
+    /// 存储在 flags 字节（offset 7）中：bit 0 = 分块模式。
     pub chunked: bool,
+
+    /// Raw flags byte read from the on-disk UCXE header (offset 7).
+    ///
+    /// When constructing a *new* header for encryption, this should be set
+    /// to `0x00` (or `0x01` for chunked) so that reserved bits are zero.
+    /// When *reading* an existing file, this preserves the exact byte from
+    /// disk — including any reserved bits — so that `to_bytes()` feeds the
+    /// authentic value into the AEAD AAD. If an attacker flips a reserved
+    /// bit, the AAD will differ from what was bound at encryption time and
+    /// tag verification will fail.
+    ///
+    /// 从磁盘 UCXE 头部（offset 7）读取的原始 flags 字节。
+    /// 新建头部加密时应设为 `0x00`（分块时 `0x01`），确保保留位为零。
+    /// 读取已有文件时保留磁盘上的精确字节（包括保留位），使 `to_bytes()`
+    /// 向 AEAD AAD 提供真实值。攻击者翻转保留位后，AAD 与加密时绑定的值
+    /// 不同，tag 校验将失败。
+    pub raw_flags: u8,
 }
 
 impl UcxeHeader {
@@ -91,13 +108,16 @@ impl UcxeHeader {
     /// algorithm/KDF/flags 字节 —— 解密端会重算相同 AAD，任一字节被改
     /// 都会触发 tag 验证失败。
     pub fn to_bytes(&self) -> Vec<u8> {
-        let flags = if self.chunked { 0x01u8 } else { 0x00u8 };
+        // Use the raw flags byte to preserve all bits (including reserved ones)
+        // so that any tampering of the flags byte on disk will cause AAD mismatch.
+        // 使用原始 flags 字节以保留所有位（含保留位），确保磁盘上 flags 字节的
+        // 任何篡改都会导致 AAD 不匹配。
         let mut out = Vec::with_capacity(8);
         out.extend_from_slice(&UCXE_MAGIC);
         out.push(self.format_version);
         out.push(self.algorithm.to_u8());
         out.push(self.kdf.to_u8());
-        out.push(flags);
+        out.push(self.raw_flags);
         out
     }
 }
@@ -582,6 +602,12 @@ fn parse_ucxe_bounded(data: &[u8]) -> Result<UcxeFile, CryptoError> {
             algorithm,
             kdf,
             chunked,
+            // Preserve the original flags byte from disk so that to_bytes()
+            // includes it in the AEAD AAD. Any tampering of reserved bits
+            // will cause decryption to fail.
+            // 保留磁盘上的原始 flags 字节，使 to_bytes() 将其纳入 AEAD AAD。
+            // 攻击者篡改保留位后解密将失败。
+            raw_flags: header_bytes[3],
         },
         kdf_params,
         salt,
@@ -635,6 +661,7 @@ mod tests {
                 algorithm,
                 kdf,
                 chunked: false,
+                raw_flags: 0x00,
             },
             kdf_params,
             salt: vec![0xAA; 16],
@@ -651,6 +678,7 @@ mod tests {
         assert_eq!(a.header.algorithm, b.header.algorithm);
         assert_eq!(a.header.kdf, b.header.kdf);
         assert_eq!(a.header.chunked, b.header.chunked);
+        assert_eq!(a.header.raw_flags, b.header.raw_flags);
         assert_eq!(a.salt, b.salt);
         assert_eq!(a.iv, b.iv);
         assert_eq!(a.ciphertext, b.ciphertext);
@@ -833,6 +861,7 @@ mod tests {
                 algorithm: Algorithm::Aes256Gcm,
                 kdf: Kdf::None,
                 chunked: false,
+                raw_flags: 0x00,
             },
             kdf_params: KdfParams::None,
             salt: vec![],
@@ -860,6 +889,7 @@ mod tests {
                 algorithm: Algorithm::ChaCha20Poly1305,
                 kdf: Kdf::None,
                 chunked: false,
+                raw_flags: 0x00,
             },
             kdf_params: KdfParams::None,
             salt: vec![0xAA; 32],

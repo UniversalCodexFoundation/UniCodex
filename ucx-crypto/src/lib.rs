@@ -660,6 +660,9 @@ fn encrypt_to_ucxe(
         algorithm,
         kdf: kdf_type,
         chunked: is_chunked,
+        // New file: reserved bits are zero; only bit 0 reflects chunked.
+        // 新文件：保留位为零；仅 bit 0 反映分块标志。
+        raw_flags: if is_chunked { 0x01 } else { 0x00 },
     };
     let aad = format::build_aead_aad(&header, kdf_params, salt);
 
@@ -740,6 +743,9 @@ fn encrypt_aes_cbc_to_ucxe(
         algorithm: Algorithm::Aes256Cbc,
         kdf: kdf_type,
         chunked: false,
+        // New file: reserved bits zero.
+        // 新文件：保留位为零。
+        raw_flags: 0x00,
     };
     let aad = header.to_bytes();
 
@@ -1261,6 +1267,53 @@ mod tests {
         assert!(
             matches!(result, Err(CryptoError::DecryptionFailed)),
             "tampered salt must fail decryption (opaque DecryptionFailed), got: {result:?}"
+        );
+    }
+
+    /// Test: flipping a reserved bit in the flags byte (offset 7) must cause
+    /// decryption to fail — proves the raw flags byte is fully bound into AAD.
+    ///
+    /// The on-disk layout for AES-GCM + no-KDF is:
+    ///   magic(4) + version(1) + algo(1) + kdf(1) + flags(1) = 8 bytes header
+    /// Flags byte is at offset 7. Setting bit 1 (0x02) while keeping bit 0
+    /// (chunked) unchanged should be caught by AEAD tag verification.
+    ///
+    /// 测试：翻转 flags 字节（offset 7）的保留位必须导致解密失败 ——
+    /// 证明原始 flags 字节完整参与了 AAD 认证。
+    /// AES-GCM + 无 KDF 时，flags 字节在第 7 字节偏移处。将 bit 1 设为 1
+    /// （0x02）而保持 bit 0 不变，AEAD 标签验证应失败。
+    #[test]
+    fn test_flags_reserved_bit_tampering_fails_decryption() {
+        let key = [0x42u8; 32];
+        let plaintext = b"AEAD AAD must cover all flags bits";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        // Encrypt with AES-256-GCM (no KDF, non-chunked → flags = 0x00).
+        // 使用 AES-256-GCM 加密（无 KDF，非分块 → flags = 0x00）。
+        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm)
+            .expect("encrypt should succeed");
+
+        // Sanity: decrypt must succeed with untampered file.
+        // 健全性检查：未篡改文件解密应成功。
+        let ok = decrypt(&dst, &key).expect("untampered decrypt should succeed");
+        assert_eq!(ok.as_slice(), plaintext);
+
+        // Tamper: flip reserved bit 1 in flags byte (offset 7: 0x00 → 0x02).
+        // 篡改：翻转 flags 字节（offset 7）的 reserved bit 1（0x00 → 0x02）。
+        let mut bytes = std::fs::read(&dst).expect("read encrypted file");
+        assert_eq!(bytes[7], 0x00, "flags byte should be 0x00 before tampering");
+        bytes[7] = 0x02; // flip reserved bit 1, keep chunked bit 0 unchanged
+        std::fs::write(&dst, &bytes).expect("write tampered file");
+
+        // Decrypt must fail: AAD mismatch due to tampered flags byte.
+        // 解密必须失败：flags 字节被篡改导致 AAD 不匹配。
+        let result = decrypt(&dst, &key);
+        assert!(
+            matches!(
+                result,
+                Err(CryptoError::AuthenticationFailed) | Err(CryptoError::DecryptionFailed)
+            ),
+            "tampered reserved flags bit must fail decryption, got: {result:?}"
         );
     }
 }
