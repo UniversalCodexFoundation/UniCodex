@@ -29,7 +29,7 @@
 //! 仅支持 AEAD 算法（AES-256-GCM 和 ChaCha20-Poly1305）。
 //! 不支持 AES-256-CBC 分块加密，因为 CBC 模式不提供内建的逐块认证。
 
-use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
+use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead, aead::Payload};
 use chacha20poly1305::ChaCha20Poly1305;
 
 use crate::{Algorithm, CryptoError};
@@ -120,14 +120,15 @@ fn encrypt_aes_gcm_with_nonce(
     key: &[u8; 32],
     nonce: &[u8; 12],
     plaintext: &[u8],
+    aad: &[u8],
 ) -> Result<(Vec<u8>, [u8; 16]), CryptoError> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce: aes_gcm::Nonce<_> = (*nonce).into();
 
-    // aes-gcm returns ciphertext || tag (tag is last 16 bytes).
-    // aes-gcm 返回 密文 || 标签（标签在最后 16 字节）。
+    // Encrypt with AAD bound into the GCM tag.
+    // 使用 AAD 绑定到 GCM 标签。
     let combined = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(&nonce, Payload { msg: plaintext, aad })
         .map_err(|_| CryptoError::InvalidFormat("AES-256-GCM chunk encryption failed".into()))?;
 
     // Split ciphertext and tag.
@@ -147,6 +148,7 @@ fn decrypt_aes_gcm_with_nonce(
     nonce: &[u8; 12],
     ciphertext: &[u8],
     tag: &[u8; 16],
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce: aes_gcm::Nonce<_> = (*nonce).into();
@@ -158,7 +160,13 @@ fn decrypt_aes_gcm_with_nonce(
     combined.extend_from_slice(tag);
 
     cipher
-        .decrypt(&nonce, combined.as_ref())
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: combined.as_ref(),
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::AuthenticationFailed)
 }
 
@@ -171,14 +179,18 @@ fn encrypt_chacha20_with_nonce(
     key: &[u8; 32],
     nonce: &[u8; 12],
     plaintext: &[u8],
+    aad: &[u8],
 ) -> Result<(Vec<u8>, [u8; 16]), CryptoError> {
     let cipher = ChaCha20Poly1305::new(key.into());
     let nonce = chacha20poly1305::Nonce::from(*nonce);
 
-    // chacha20poly1305 returns ciphertext || tag (tag is last 16 bytes).
-    // chacha20poly1305 返回 密文 || 标签（标签在最后 16 字节）。
+    // Encrypt with AAD bound into the Poly1305 tag.
+    // 使用 AAD 绑定到 Poly1305 标签。
     let combined = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(
+            &nonce,
+            chacha20poly1305::aead::Payload { msg: plaintext, aad },
+        )
         .map_err(|_| {
             CryptoError::InvalidFormat("ChaCha20-Poly1305 chunk encryption failed".into())
         })?;
@@ -200,6 +212,7 @@ fn decrypt_chacha20_with_nonce(
     nonce: &[u8; 12],
     ciphertext: &[u8],
     tag: &[u8; 16],
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     let cipher = ChaCha20Poly1305::new(key.into());
     let nonce = chacha20poly1305::Nonce::from(*nonce);
@@ -211,7 +224,13 @@ fn decrypt_chacha20_with_nonce(
     combined.extend_from_slice(tag);
 
     cipher
-        .decrypt(&nonce, combined.as_ref())
+        .decrypt(
+            &nonce,
+            chacha20poly1305::aead::Payload {
+                msg: combined.as_ref(),
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::AuthenticationFailed)
 }
 
@@ -253,6 +272,7 @@ pub fn encrypt_chunked(
     base_nonce: &[u8; 12],
     plaintext: &[u8],
     algorithm: Algorithm,
+    aad: &[u8],
 ) -> Result<ChunkedCiphertext, CryptoError> {
     // AES-256-CBC does not support chunked encryption (no per-chunk authentication).
     // AES-256-CBC 不支持分块加密（无逐块认证）。
@@ -277,9 +297,9 @@ pub fn encrypt_chunked(
         // Encrypt chunk using the appropriate algorithm.
         // 使用对应算法加密分块。
         let (ciphertext, tag) = match algorithm {
-            Algorithm::Aes256Gcm => encrypt_aes_gcm_with_nonce(key, &chunk_nonce, chunk)?,
+            Algorithm::Aes256Gcm => encrypt_aes_gcm_with_nonce(key, &chunk_nonce, chunk, aad)?,
             Algorithm::ChaCha20Poly1305 => {
-                encrypt_chacha20_with_nonce(key, &chunk_nonce, chunk)?
+                encrypt_chacha20_with_nonce(key, &chunk_nonce, chunk, aad)?
             }
             // Already checked above, but exhaustive match required.
             // 上面已检查，但需要穷举匹配。
@@ -321,6 +341,7 @@ pub fn decrypt_chunked(
     base_nonce: &[u8; 12],
     chunked: &ChunkedCiphertext,
     algorithm: Algorithm,
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     // AES-256-CBC does not support chunked encryption.
     // AES-256-CBC 不支持分块加密。
@@ -341,10 +362,10 @@ pub fn decrypt_chunked(
         // 使用对应算法解密分块。
         let decrypted = match algorithm {
             Algorithm::Aes256Gcm => {
-                decrypt_aes_gcm_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag)?
+                decrypt_aes_gcm_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag, aad)?
             }
             Algorithm::ChaCha20Poly1305 => {
-                decrypt_chacha20_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag)?
+                decrypt_chacha20_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag, aad)?
             }
             Algorithm::Aes256Cbc => unreachable!(),
         };
@@ -434,6 +455,19 @@ pub fn deserialize_chunks(
     }
 
     let chunk_count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    // Hard upper bound: chunk_count cannot exceed what the remaining bytes
+    // could possibly represent (each chunk ≥ 4B size prefix + 16B tag = 20B).
+    // This guards against Vec::with_capacity OOM when `chunk_count` is a
+    // maliciously-crafted huge value (e.g. after a header-flags tamper).
+    // 硬上限：chunk_count 不得超过剩余字节可能表达的数量（每块至少 20B）。
+    // 防御攻击者伪造巨大 chunk_count 导致 Vec::with_capacity OOM。
+    let max_possible_chunks = (data.len().saturating_sub(4)) / (4 + TAG_SIZE);
+    if chunk_count as usize > max_possible_chunks {
+        return Err(CryptoError::InvalidFormat(format!(
+            "chunk_count {chunk_count} exceeds max possible {max_possible_chunks} given data size / \
+             chunk_count 超过数据可能容纳的最大分块数"
+        )));
+    }
     let mut offset = 4usize;
     let mut chunks = Vec::with_capacity(chunk_count as usize);
 
@@ -451,9 +485,15 @@ pub fn deserialize_chunks(
                 as usize;
         offset += 4;
 
-        // Read ciphertext bytes.
-        // 读取密文字节。
-        if offset + ct_size > data.len() {
+        // Read ciphertext bytes. Use checked_add to defend against usize overflow
+        // from a malicious ct_size, then compare with data.len().
+        // 读取密文字节。使用 checked_add 防止 ct_size 恶意值导致 usize 溢出。
+        let end = offset.checked_add(ct_size).ok_or_else(|| {
+            CryptoError::InvalidFormat(format!(
+                "chunk {i} ciphertext size overflow / 分块 {i} 密文大小溢出"
+            ))
+        })?;
+        if end > data.len() {
             return Err(CryptoError::InvalidFormat(format!(
                 "chunked data truncated at chunk {} ciphertext",
                 i
@@ -549,7 +589,7 @@ mod tests {
         let nonce = [0x01u8; 12];
         let plaintext = b"Hello, chunked encryption!";
 
-        let chunked = encrypt_chunked(&key, &nonce, plaintext, Algorithm::Aes256Gcm).unwrap();
+        let chunked = encrypt_chunked(&key, &nonce, plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         // Should be exactly 1 chunk.
         // 应恰好有 1 个分块。
@@ -558,7 +598,7 @@ mod tests {
 
         // Decrypt and verify round-trip.
         // 解密并验证往返正确。
-        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm).unwrap();
+        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm, b"").unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -572,12 +612,12 @@ mod tests {
         // 2.5 MiB = 2 个完整块 + 1 个半块
         let plaintext = vec![0xCDu8; CHUNK_SIZE * 2 + CHUNK_SIZE / 2];
 
-        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm).unwrap();
+        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         assert_eq!(chunked.chunk_count, 3);
         assert_eq!(chunked.chunks.len(), 3);
 
-        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm).unwrap();
+        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm, b"").unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -591,12 +631,12 @@ mod tests {
         // 恰好 2 MiB = 2 个分块，无余数。
         let plaintext = vec![0xEFu8; CHUNK_SIZE * 2];
 
-        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm).unwrap();
+        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         assert_eq!(chunked.chunk_count, 2);
         assert_eq!(chunked.chunks.len(), 2);
 
-        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm).unwrap();
+        let decrypted = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm, b"").unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -608,13 +648,13 @@ mod tests {
         let nonce = [0x01u8; 12];
         let plaintext = vec![0xAAu8; CHUNK_SIZE * 2];
 
-        let mut chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm).unwrap();
+        let mut chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         // Tamper with the second chunk's ciphertext.
         // 篡改第二个分块的密文。
         chunked.chunks[1].ciphertext[0] ^= 0xFF;
 
-        let result = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm);
+        let result = decrypt_chunked(&key, &nonce, &chunked, Algorithm::Aes256Gcm, b"");
         assert!(
             matches!(result, Err(CryptoError::AuthenticationFailed)),
             "tampered chunk should fail authentication"
@@ -632,12 +672,12 @@ mod tests {
         let plaintext = vec![0xBBu8; CHUNK_SIZE + CHUNK_SIZE / 2];
 
         let chunked =
-            encrypt_chunked(&key, &nonce, &plaintext, Algorithm::ChaCha20Poly1305).unwrap();
+            encrypt_chunked(&key, &nonce, &plaintext, Algorithm::ChaCha20Poly1305, b"").unwrap();
 
         assert_eq!(chunked.chunk_count, 2);
 
         let decrypted =
-            decrypt_chunked(&key, &nonce, &chunked, Algorithm::ChaCha20Poly1305).unwrap();
+            decrypt_chunked(&key, &nonce, &chunked, Algorithm::ChaCha20Poly1305, b"").unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -649,7 +689,7 @@ mod tests {
         let nonce = [0x00u8; 12];
         let plaintext = b"should not encrypt";
 
-        let result = encrypt_chunked(&key, &nonce, plaintext, Algorithm::Aes256Cbc);
+        let result = encrypt_chunked(&key, &nonce, plaintext, Algorithm::Aes256Cbc, b"");
         assert!(
             matches!(result, Err(CryptoError::UnsupportedAlgorithm(_))),
             "AES-256-CBC should be rejected for chunked encryption"
@@ -664,7 +704,7 @@ mod tests {
         let nonce = [0xABu8; 12];
         let plaintext = vec![0xCDu8; CHUNK_SIZE + 100];
 
-        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm).unwrap();
+        let chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         // Serialize then deserialize.
         // 序列化然后反序列化。
@@ -677,7 +717,7 @@ mod tests {
         // Verify the deserialized data can still be decrypted.
         // 验证反序列化后的数据仍可解密。
         let decrypted =
-            decrypt_chunked(&key, &nonce, &deserialized, Algorithm::Aes256Gcm).unwrap();
+            decrypt_chunked(&key, &nonce, &deserialized, Algorithm::Aes256Gcm, b"").unwrap();
         assert_eq!(decrypted, plaintext);
     }
 }

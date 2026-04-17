@@ -76,6 +76,32 @@ pub struct UcxeHeader {
     pub chunked: bool,
 }
 
+impl UcxeHeader {
+    /// Serialize the header as the exact 8-byte prefix used as AEAD AAD
+    /// (Additional Authenticated Data): `magic[4] || version || algo || kdf || flags`.
+    ///
+    /// Binding this byte sequence into the AEAD tag prevents an attacker from
+    /// swapping the algorithm/KDF/flags bytes without being detected — the
+    /// decrypt side recomputes the same AAD and tag verification will fail
+    /// if any header byte was tampered.
+    ///
+    /// 将头部序列化为作为 AEAD AAD（附加认证数据）的精确 8 字节前缀：
+    /// `magic[4] || version || algo || kdf || flags`。
+    /// 将该字节串绑入 AEAD 标签后，攻击者无法在不破坏认证的前提下篡改
+    /// algorithm/KDF/flags 字节 —— 解密端会重算相同 AAD，任一字节被改
+    /// 都会触发 tag 验证失败。
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let flags = if self.chunked { 0x01u8 } else { 0x00u8 };
+        let mut out = Vec::with_capacity(8);
+        out.extend_from_slice(&UCXE_MAGIC);
+        out.push(self.format_version);
+        out.push(self.algorithm.to_u8());
+        out.push(self.kdf.to_u8());
+        out.push(flags);
+        out
+    }
+}
+
 /// Key derivation function parameters stored in the UCXE file.
 ///
 /// 存储在 UCXE 文件中的密钥派生函数参数。
@@ -108,6 +134,86 @@ pub enum KdfParams {
         /// 迭代次数。
         iterations: u32,
     },
+}
+
+impl KdfParams {
+    /// Serialize the KDF parameters as the exact byte sequence used as part
+    /// of the AEAD AAD. The encoding mirrors `write_ucxe`'s Step 3:
+    ///
+    /// - `None`:     empty (0 bytes)
+    /// - `Argon2id`: `memory_cost_kib || time_cost || parallelism` (3 × u32 LE = 12 B)
+    /// - `Pbkdf2`:   `iterations` (u32 LE = 4 B)
+    ///
+    /// Keeping this in lock-step with the on-disk format ensures the AAD
+    /// recomputed at decrypt time is byte-for-byte identical to what was
+    /// bound into the tag at encrypt time.
+    ///
+    /// 将 KDF 参数序列化为 AEAD AAD 的组成字节串。编码方式与 `write_ucxe`
+    /// 第 3 步一致：
+    /// - `None`：空（0 字节）
+    /// - `Argon2id`：`memory_cost_kib || time_cost || parallelism`（3 × u32 LE = 12 B）
+    /// - `Pbkdf2`：`iterations`（u32 LE = 4 B）
+    ///
+    /// 保持与磁盘格式一致可以确保解密端重算出的 AAD 与加密端绑入标签的
+    /// AAD 逐字节一致。
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            KdfParams::None => Vec::new(),
+            KdfParams::Argon2id {
+                memory_cost_kib,
+                time_cost,
+                parallelism,
+            } => {
+                let mut out = Vec::with_capacity(12);
+                out.extend_from_slice(&memory_cost_kib.to_le_bytes());
+                out.extend_from_slice(&time_cost.to_le_bytes());
+                out.extend_from_slice(&parallelism.to_le_bytes());
+                out
+            }
+            KdfParams::Pbkdf2 { iterations } => iterations.to_le_bytes().to_vec(),
+        }
+    }
+}
+
+/// Build the AEAD Additional Authenticated Data (AAD) for a UCXE file.
+///
+/// The AAD is the concatenation of:
+///
+/// 1. `header.to_bytes()` — 8 B: magic(4) || format_version || algo || kdf || flags
+/// 2. `kdf_params.to_bytes()` — 0 / 4 / 12 B depending on KDF
+/// 3. `salt` — variable-length salt bytes
+///
+/// Binding these fields into the AEAD tag prevents an attacker from altering
+/// any of them (algorithm, KDF choice / parameters, chunked flag, salt) without
+/// invalidating the tag. Any single-bit flip in the header, KDF parameters, or
+/// salt will cause `decrypt` to return `AuthenticationFailed`.
+///
+/// Both `encrypt_to_ucxe` / `decrypt_ucxe_payload` (and their CBC / chunked
+/// siblings once applicable) must call this function with the same inputs so
+/// that the encrypt-time and decrypt-time AADs are identical.
+///
+/// 为 UCXE 文件构建 AEAD 的附加认证数据（AAD）。
+/// AAD 由以下部分拼接而成：
+/// 1. `header.to_bytes()` — 8 B：magic(4) || format_version || algo || kdf || flags
+/// 2. `kdf_params.to_bytes()` — 0 / 4 / 12 B，取决于 KDF
+/// 3. `salt` — 变长盐值字节
+///
+/// 将这些字段绑入 AEAD 标签后，攻击者无法在不破坏认证的情况下篡改其中任何
+/// 一个字段（算法、KDF 选择/参数、分块标志、盐值）。加密端与解密端必须以
+/// 相同输入调用本函数，确保两端的 AAD 逐字节一致。
+pub fn build_aead_aad(
+    header: &UcxeHeader,
+    kdf_params: &KdfParams,
+    salt: &[u8],
+) -> Vec<u8> {
+    let header_bytes = header.to_bytes();
+    let kdf_bytes = kdf_params.to_bytes();
+
+    let mut aad = Vec::with_capacity(header_bytes.len() + kdf_bytes.len() + salt.len());
+    aad.extend_from_slice(&header_bytes);
+    aad.extend_from_slice(&kdf_bytes);
+    aad.extend_from_slice(salt);
+    aad
 }
 
 /// Complete representation of a UCXE encrypted file.

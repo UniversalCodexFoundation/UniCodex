@@ -11,7 +11,7 @@
 
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
-    aead::Aead,
+    aead::{Aead, Payload},
 };
 use rand::RngCore;
 
@@ -46,6 +46,7 @@ pub type EncryptResult = (Vec<u8>, [u8; NONCE_SIZE], [u8; TAG_SIZE]);
 pub fn encrypt(
     key: &[u8; KEY_SIZE],
     plaintext: &[u8],
+    aad: &[u8],
 ) -> Result<EncryptResult, CryptoError> {
     // 1. Create cipher instance from key.
     //    根据密钥创建 cipher 实例。
@@ -57,10 +58,10 @@ pub fn encrypt(
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce: Nonce<_> = nonce_bytes.into();
 
-    // 3. Encrypt: aes-gcm returns ciphertext || tag (postfix, 16 bytes).
-    //    加密：aes-gcm 返回 ciphertext || tag（后缀，16 字节）。
+    // 3. Encrypt with Payload { msg, aad } so the AAD is bound into the tag.
+    //    使用 Payload { msg, aad } 将 AAD 绑入认证标签。
     let ciphertext_with_tag = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(&nonce, Payload { msg: plaintext, aad })
         .map_err(|_| CryptoError::InvalidFormat("AES-256-GCM encryption failed".to_string()))?;
 
     // 4. Split ciphertext and tag (last 16 bytes are tag).
@@ -86,6 +87,7 @@ pub fn decrypt(
     nonce: &[u8; NONCE_SIZE],
     ciphertext: &[u8],
     tag: &[u8; TAG_SIZE],
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     // 1. Create cipher instance from key.
     //    根据密钥创建 cipher 实例。
@@ -97,11 +99,18 @@ pub fn decrypt(
     ciphertext_with_tag.extend_from_slice(ciphertext);
     ciphertext_with_tag.extend_from_slice(tag);
 
-    // 3. Decrypt and verify authentication tag.
-    //    解密并验证认证标签。
+    // 3. Decrypt and verify authentication tag with the same AAD that was
+    //    bound during encryption. Any AAD mismatch = AuthenticationFailed.
+    //    解密并验证认证标签，AAD 必须与加密时一致。
     let nonce: Nonce<_> = (*nonce).into();
     let plaintext = cipher
-        .decrypt(&nonce, ciphertext_with_tag.as_ref())
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext_with_tag.as_ref(),
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::AuthenticationFailed)?;
 
     Ok(plaintext)
@@ -115,6 +124,10 @@ pub fn decrypt(
 mod tests {
     use super::*;
 
+    // Empty AAD used by tests that don't care about AAD binding.
+    // 测试中不关心 AAD 绑定时使用的空 AAD。
+    const EMPTY_AAD: &[u8] = b"";
+
     /// Round-trip: encrypt then decrypt should return original plaintext.
     /// 往返测试：加密后解密应返回原始明文。
     #[test]
@@ -122,8 +135,8 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = b"Hello, Unicodex!";
 
-        let (ciphertext, nonce, tag) = encrypt(&key, plaintext).unwrap();
-        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag).unwrap();
+        let (ciphertext, nonce, tag) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
+        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag, EMPTY_AAD).unwrap();
 
         assert_eq!(decrypted, plaintext);
     }
@@ -136,8 +149,8 @@ mod tests {
         let wrong_key = [0x00u8; KEY_SIZE];
         let plaintext = b"secret data";
 
-        let (ciphertext, nonce, tag) = encrypt(&key, plaintext).unwrap();
-        let result = decrypt(&wrong_key, &nonce, &ciphertext, &tag);
+        let (ciphertext, nonce, tag) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
+        let result = decrypt(&wrong_key, &nonce, &ciphertext, &tag, EMPTY_AAD);
 
         assert!(matches!(result, Err(CryptoError::AuthenticationFailed)));
     }
@@ -149,13 +162,13 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = b"integrity check";
 
-        let (mut ciphertext, nonce, tag) = encrypt(&key, plaintext).unwrap();
+        let (mut ciphertext, nonce, tag) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
 
         // Flip a bit in the ciphertext.
         // 翻转密文中的一个比特。
         ciphertext[0] ^= 0xFF;
 
-        let result = decrypt(&key, &nonce, &ciphertext, &tag);
+        let result = decrypt(&key, &nonce, &ciphertext, &tag, EMPTY_AAD);
         assert!(matches!(result, Err(CryptoError::AuthenticationFailed)));
     }
 
@@ -166,13 +179,13 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = b"tag check";
 
-        let (ciphertext, nonce, mut tag) = encrypt(&key, plaintext).unwrap();
+        let (ciphertext, nonce, mut tag) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
 
         // Flip a bit in the tag.
         // 翻转 tag 中的一个比特。
         tag[0] ^= 0xFF;
 
-        let result = decrypt(&key, &nonce, &ciphertext, &tag);
+        let result = decrypt(&key, &nonce, &ciphertext, &tag, EMPTY_AAD);
         assert!(matches!(result, Err(CryptoError::AuthenticationFailed)));
     }
 
@@ -183,13 +196,13 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = b"";
 
-        let (ciphertext, nonce, tag) = encrypt(&key, plaintext).unwrap();
+        let (ciphertext, nonce, tag) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
 
         // Ciphertext should be empty (only tag is separate).
         // 密文应为空（tag 单独分离）。
         assert!(ciphertext.is_empty());
 
-        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag).unwrap();
+        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag, EMPTY_AAD).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -200,8 +213,8 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = vec![0xABu8; 1024 * 1024]; // 1 MB
 
-        let (ciphertext, nonce, tag) = encrypt(&key, &plaintext).unwrap();
-        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag).unwrap();
+        let (ciphertext, nonce, tag) = encrypt(&key, &plaintext, EMPTY_AAD).unwrap();
+        let decrypted = decrypt(&key, &nonce, &ciphertext, &tag, EMPTY_AAD).unwrap();
 
         assert_eq!(decrypted, plaintext);
     }
@@ -213,11 +226,31 @@ mod tests {
         let key = [0x42u8; KEY_SIZE];
         let plaintext = b"nonce test";
 
-        let (_, nonce1, _) = encrypt(&key, plaintext).unwrap();
-        let (_, nonce2, _) = encrypt(&key, plaintext).unwrap();
+        let (_, nonce1, _) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
+        let (_, nonce2, _) = encrypt(&key, plaintext, EMPTY_AAD).unwrap();
 
         // Nonces should be different (probability of collision is negligible).
         // Nonce 应不同（碰撞概率可忽略不计）。
         assert_ne!(nonce1, nonce2);
+    }
+
+    /// AAD mismatch between encrypt and decrypt must fail authentication.
+    /// 加密与解密 AAD 不一致必须导致认证失败。
+    #[test]
+    fn test_aad_mismatch_fails() {
+        let key = [0x42u8; KEY_SIZE];
+        let plaintext = b"aad-bound data";
+
+        let (ciphertext, nonce, tag) = encrypt(&key, plaintext, b"header-A").unwrap();
+
+        // Same key/nonce/tag but different AAD → must fail.
+        // 相同的 key/nonce/tag 但 AAD 不同 → 必须失败。
+        let result = decrypt(&key, &nonce, &ciphertext, &tag, b"header-B");
+        assert!(matches!(result, Err(CryptoError::AuthenticationFailed)));
+
+        // Same AAD should succeed.
+        // 相同 AAD 必须成功。
+        let ok = decrypt(&key, &nonce, &ciphertext, &tag, b"header-A").unwrap();
+        assert_eq!(ok, plaintext);
     }
 }

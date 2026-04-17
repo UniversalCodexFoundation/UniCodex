@@ -585,22 +585,35 @@ fn encrypt_to_ucxe(
     kdf_params: &format::KdfParams,
     salt: &[u8],
 ) -> Result<format::UcxeFile, CryptoError> {
+    // Build the header first, then compute the AEAD AAD from
+    // `header || kdf_params || salt`. Binding the full tuple into every
+    // AEAD tag prevents an attacker from swapping any of these bytes
+    // (algorithm, KDF choice, Argon2id/PBKDF2 parameters, salt, chunked
+    // flag) without the decrypt side detecting it.
+    //
+    // 先构建 header，再基于 `header || kdf_params || salt` 组合成 AEAD AAD。
+    // 将完整元组绑入每个 AEAD 标签，可阻止攻击者在不被解密端察觉的情况下
+    // 篡改任何字段（算法、KDF 选择、Argon2id/PBKDF2 参数、盐值、分块标志）。
+    let header = format::UcxeHeader {
+        format_version: UCXE_FORMAT_VERSION,
+        algorithm,
+        kdf: kdf_type,
+        chunked: is_chunked,
+    };
+    let aad = format::build_aead_aad(&header, kdf_params, salt);
+
     if is_chunked {
         // Chunked mode: generate base nonce, encrypt in chunks, serialize.
         // 分块模式：生成基础 nonce，分块加密，序列化。
         let mut base_nonce = [0u8; 12];
         rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut base_nonce);
 
-        let chunked_ct = chunked::encrypt_chunked(key, &base_nonce, plaintext, algorithm)?;
+        let chunked_ct =
+            chunked::encrypt_chunked(key, &base_nonce, plaintext, algorithm, &aad)?;
         let serialized = chunked::serialize_chunks(&chunked_ct);
 
         Ok(format::UcxeFile {
-            header: format::UcxeHeader {
-                format_version: UCXE_FORMAT_VERSION,
-                algorithm,
-                kdf: kdf_type,
-                chunked: true,
-            },
+            header,
             kdf_params: kdf_params.clone(),
             salt: salt.to_vec(),
             iv: base_nonce.to_vec(),
@@ -613,8 +626,8 @@ fn encrypt_to_ucxe(
         // Non-chunked mode: encrypt the entire plaintext at once.
         // 非分块模式：一次性加密全部明文。
         let (ciphertext, nonce, tag) = match algorithm {
-            Algorithm::Aes256Gcm => aes_gcm::encrypt(key, plaintext)?,
-            Algorithm::ChaCha20Poly1305 => chacha20::encrypt(key, plaintext)?,
+            Algorithm::Aes256Gcm => aes_gcm::encrypt(key, plaintext, &aad)?,
+            Algorithm::ChaCha20Poly1305 => chacha20::encrypt(key, plaintext, &aad)?,
             Algorithm::Aes256Cbc => {
                 return Err(CryptoError::UnsupportedAlgorithm(
                     "AES-256-CBC should use encrypt_aes_cbc_to_ucxe() / \
@@ -625,12 +638,7 @@ fn encrypt_to_ucxe(
         };
 
         Ok(format::UcxeFile {
-            header: format::UcxeHeader {
-                format_version: UCXE_FORMAT_VERSION,
-                algorithm,
-                kdf: kdf_type,
-                chunked: false,
-            },
+            header,
             kdf_params: kdf_params.clone(),
             salt: salt.to_vec(),
             iv: nonce.to_vec(),
@@ -690,6 +698,16 @@ fn decrypt_ucxe_payload(
 ) -> Result<Vec<u8>, CryptoError> {
     let algorithm = ucxe.header.algorithm;
 
+    // Recompute the AAD from the parsed header, KDF parameters, and salt.
+    // Must match the bytes bound at encrypt time (see `encrypt_to_ucxe`);
+    // any discrepancy will cause AEAD tag verification to fail with
+    // `AuthenticationFailed`, correctly flagging header / KDF / salt tampering.
+    //
+    // 从解析出的 header、KDF 参数和盐值重建 AAD。必须与加密端绑入的字节一致
+    //（参见 `encrypt_to_ucxe`）；若任一字节不匹配，AEAD 标签验证会失败并
+    // 返回 `AuthenticationFailed`，正确识别 header / KDF / salt 的篡改。
+    let aad = format::build_aead_aad(&ucxe.header, &ucxe.kdf_params, &ucxe.salt);
+
     if ucxe.header.chunked {
         // Chunked mode: deserialize chunks, then decrypt.
         // 分块模式：反序列化分块，然后解密。
@@ -703,7 +721,7 @@ fn decrypt_ucxe_payload(
         })?;
 
         let chunked_ct = chunked::deserialize_chunks(&ucxe.ciphertext, algorithm)?;
-        chunked::decrypt_chunked(key, &nonce, &chunked_ct, algorithm)
+        chunked::decrypt_chunked(key, &nonce, &chunked_ct, algorithm, &aad)
     } else {
         // Non-chunked mode: decrypt directly.
         // 非分块模式：直接解密。
@@ -715,7 +733,7 @@ fn decrypt_ucxe_payload(
                 let tag: [u8; 16] = ucxe.tag.clone().try_into().map_err(|_| {
                     CryptoError::InvalidFormat("AES-GCM tag must be 16 bytes".into())
                 })?;
-                aes_gcm::decrypt(key, &nonce, &ucxe.ciphertext, &tag)
+                aes_gcm::decrypt(key, &nonce, &ucxe.ciphertext, &tag, &aad)
             }
             Algorithm::ChaCha20Poly1305 => {
                 let nonce: [u8; 12] = ucxe.iv.clone().try_into().map_err(|_| {
@@ -724,7 +742,7 @@ fn decrypt_ucxe_payload(
                 let tag: [u8; 16] = ucxe.tag.clone().try_into().map_err(|_| {
                     CryptoError::InvalidFormat("ChaCha20 tag must be 16 bytes".into())
                 })?;
-                chacha20::decrypt(key, &nonce, &ucxe.ciphertext, &tag)
+                chacha20::decrypt(key, &nonce, &ucxe.ciphertext, &tag, &aad)
             }
             Algorithm::Aes256Cbc => Err(CryptoError::UnsupportedAlgorithm(
                 "AES-256-CBC requires passphrase mode for decryption / \
@@ -1013,5 +1031,109 @@ mod tests {
             .expect("decrypt should succeed");
 
         assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test: tampering the UCXE header's flags byte after encryption must
+    /// cause decryption to fail — proves the header bytes are bound into AAD.
+    ///
+    /// 测试：加密后篡改 UCXE 头部 flags 字节必须导致解密失败 ——
+    /// 证明头部字节已经绑定到 AEAD 的 AAD。
+    #[test]
+    fn test_header_tampering_fails_decryption() {
+        let key = [0x42u8; 32];
+        let plaintext = b"header-bound authenticated encryption";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm).expect("encrypt");
+
+        // File layout offsets: magic[4] + ver + algo + kdf + flags → flags at byte 7.
+        // 文件布局偏移：魔数[4] + 版本 + 算法 + KDF + flags → flags 位于第 7 字节。
+        let mut bytes = std::fs::read(&dst).unwrap();
+        bytes[7] ^= 0x01; // flip the chunked flag bit
+        std::fs::write(&dst, &bytes).unwrap();
+
+        let result = decrypt(&dst, &key);
+        assert!(
+            result.is_err(),
+            "header tampering must cause decryption failure (AAD binding active)"
+        );
+    }
+
+    /// Test: tampering the encoded KDF parameters byte after encryption must
+    /// cause decryption to fail — proves the KDF params are bound into AAD.
+    ///
+    /// For PBKDF2 the on-disk layout is:
+    ///   magic(4) + version(1) + algo(1) + kdf(1) + flags(1) + iterations(u32 LE, 4 B)
+    /// so byte 8 is the low byte of the iteration count. Flipping it both
+    /// (a) causes a different key to be derived AND (b) desynchronizes AAD,
+    /// so the AEAD tag must fail regardless of which check wins.
+    ///
+    /// 测试：加密后篡改编码后的 KDF 参数字节必须导致解密失败 ——
+    /// 证明 KDF 参数已绑定到 AEAD 的 AAD。
+    /// PBKDF2 的磁盘布局：魔数(4) + 版本(1) + 算法(1) + KDF(1) + flags(1)
+    /// + 迭代次数(u32 LE, 4B)，因此第 8 字节是迭代次数低字节。翻转它既会
+    /// 让派生密钥不同，也会让 AAD 不一致 —— 两条路径都会让 AEAD 失败。
+    #[test]
+    fn test_kdf_params_tampering_fails_decryption() {
+        let plaintext = b"CRYPTO-2: kdf-params must be AAD-bound";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "kdf-aad-passphrase", Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        // Flip one bit in the PBKDF2 iteration count (file byte 8).
+        // 翻转 PBKDF2 迭代次数的一个比特（文件第 8 字节）。
+        let mut bytes = std::fs::read(&dst).expect("read encrypted file");
+        bytes[8] ^= 0x01;
+        std::fs::write(&dst, &bytes).expect("write tampered file");
+
+        let result = decrypt_with_passphrase(&dst, "kdf-aad-passphrase");
+        assert!(
+            matches!(result, Err(CryptoError::AuthenticationFailed)),
+            "tampered KDF params must fail AEAD authentication, got: {result:?}"
+        );
+    }
+
+    /// Test: tampering the salt byte after encryption must cause decryption
+    /// to fail — proves the salt is bound into AAD.
+    ///
+    /// PBKDF2 on-disk layout up to the salt:
+    ///   magic(4) + header(4) + pbkdf2_params(4) + salt_len_prefix(u16 LE, 2 B)
+    ///   + salt(...)
+    /// so salt[0] lives at byte 14. Flipping it re-derives a different key
+    /// and also desynchronizes AAD — either way the AEAD tag must reject.
+    ///
+    /// 测试：加密后篡改盐字节必须导致解密失败 —— 证明盐已经绑定到 AEAD
+    /// 的 AAD。PBKDF2 盐值之前的布局：
+    ///   魔数(4) + header(4) + pbkdf2 参数(4) + 盐长度前缀(u16 LE, 2B) + 盐...
+    /// 因此 salt[0] 在第 14 字节。翻转它会派生出不同密钥，同时 AAD 也不
+    /// 一致 —— 两条路径都会使 AEAD 标签被拒。
+    #[test]
+    fn test_salt_tampering_fails_decryption() {
+        let plaintext = b"CRYPTO-2: salt must be AAD-bound";
+        let (_dir, src, dst) = setup_temp_files(plaintext);
+
+        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        encrypt_with_passphrase_and_params(
+            &src, &dst, "salt-aad-passphrase", Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256, &kdf_params,
+        )
+        .expect("encrypt should succeed");
+
+        // Flip one bit in the first salt byte (file byte 14 for this layout).
+        // 翻转第一个盐字节的一个比特（此布局下为文件第 14 字节）。
+        let mut bytes = std::fs::read(&dst).expect("read encrypted file");
+        bytes[14] ^= 0x01;
+        std::fs::write(&dst, &bytes).expect("write tampered file");
+
+        let result = decrypt_with_passphrase(&dst, "salt-aad-passphrase");
+        assert!(
+            matches!(result, Err(CryptoError::AuthenticationFailed)),
+            "tampered salt must fail AEAD authentication, got: {result:?}"
+        );
     }
 }

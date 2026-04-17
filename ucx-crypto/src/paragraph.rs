@@ -130,9 +130,14 @@ pub fn encrypt_paragraph(
     //    Each engine returns (ciphertext, nonce, tag) separately.
     //    使用相应的 AEAD 引擎加密。
     //    每个引擎分别返回 (密文, nonce, tag)。
+    // Paragraph-level encryption has no framing header, so no AAD is bound.
+    // 段落级加密无外层 header，故无 AAD 绑定。
+    let aad: &[u8] = b"";
     let (ciphertext, nonce, tag) = match algorithm {
-        Algorithm::Aes256Gcm => crate::aes_gcm::encrypt(key, plaintext.as_bytes())?,
-        Algorithm::ChaCha20Poly1305 => crate::chacha20::encrypt(key, plaintext.as_bytes())?,
+        Algorithm::Aes256Gcm => crate::aes_gcm::encrypt(key, plaintext.as_bytes(), aad)?,
+        Algorithm::ChaCha20Poly1305 => {
+            crate::chacha20::encrypt(key, plaintext.as_bytes(), aad)?
+        }
         // Unreachable because we already rejected CBC above.
         // 不可达，因为上面已经拒绝了 CBC。
         Algorithm::Aes256Cbc => unreachable!(),
@@ -213,12 +218,13 @@ pub fn decrypt_paragraph(
         .try_into()
         .expect("tag slice length is guaranteed to be TAG_SIZE");
 
-    // 5. Decrypt using the appropriate AEAD engine.
-    //    使用相应的 AEAD 引擎解密。
+    // 5. Decrypt using the appropriate AEAD engine (empty AAD).
+    //    使用相应的 AEAD 引擎解密（空 AAD）。
+    let aad: &[u8] = b"";
     let plaintext_bytes = match algorithm {
-        Algorithm::Aes256Gcm => crate::aes_gcm::decrypt(key, &nonce, ciphertext, &tag)?,
+        Algorithm::Aes256Gcm => crate::aes_gcm::decrypt(key, &nonce, ciphertext, &tag, aad)?,
         Algorithm::ChaCha20Poly1305 => {
-            crate::chacha20::decrypt(key, &nonce, ciphertext, &tag)?
+            crate::chacha20::decrypt(key, &nonce, ciphertext, &tag, aad)?
         }
         Algorithm::Aes256Cbc => unreachable!(),
     };
