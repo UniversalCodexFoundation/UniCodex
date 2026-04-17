@@ -265,23 +265,7 @@ pub fn verify(path: &std::path::Path) -> Result<VerifyReport, VerifyError> {
     let layer1_valid = layer1_result.as_ref().is_some_and(|r| r.valid);
     let layer2_valid = layer2_result.as_ref().is_some_and(|r| r.valid);
 
-    let status = if !has_layer1 && !has_layer2 {
-        // No signatures found at all.
-        // 完全没有找到签名。
-        VerifyStatus::Unsigned
-    } else if layer1_valid && layer2_valid {
-        // Both layers pass → fully verified.
-        // 两层都通过 → 完全验证。
-        VerifyStatus::Valid
-    } else if layer1_valid || layer2_valid {
-        // Only one layer passes → partial.
-        // 仅一层通过 → 部分验证。
-        VerifyStatus::ValidWithWarnings
-    } else {
-        // Signatures found but none valid → invalid.
-        // 找到签名但都无效 → 无效。
-        VerifyStatus::Invalid
-    };
+    let status = decide_status(has_layer1, layer1_valid, has_layer2, layer2_valid);
 
     Ok(VerifyReport {
         status,
@@ -883,6 +867,75 @@ struct Layer1SignerInfo {
 }
 
 // =============================================================================
+// Status decision / 状态判定
+// =============================================================================
+
+/// Decide the overall [`VerifyStatus`] from per-layer presence and validity.
+///
+/// Decision table:
+///
+/// | L1 present | L1 valid | L2 present | L2 valid | → status              |
+/// |------------|----------|------------|----------|------------------------|
+/// | false      | *        | false      | *        | `Unsigned`             |
+/// | true       | true     | true       | true     | `Valid`                |
+/// | true       | *        | true       | *        | `Invalid` (any layer FAIL → FAIL) |
+/// | true       | true     | false      | *        | `ValidWithWarnings`    |
+/// | true       | false    | false      | *        | `Invalid`              |
+/// | false      | *        | true       | true     | `ValidWithWarnings`    |
+/// | false      | *        | true       | false    | `Invalid`              |
+///
+/// SIG-L1/L2 rationale: when both layers are present, a failure in either one
+/// (e.g. a hash mismatch on Layer 1 or an invalid Layer 2 signature) is a hard
+/// failure — not a "partial success with warnings". Only when exactly one
+/// layer is present does `ValidWithWarnings` indicate "valid but coverage is
+/// incomplete".
+///
+/// 从各层的存在性和有效性决定整体 [`VerifyStatus`]。
+///
+/// SIG-L1/L2 理由：两层同时存在时，任一层失败（如 Layer 1 的 hash mismatch
+/// 或 Layer 2 签名无效）都是硬失败 — 不是"伴有警告的部分成功"。只有当恰好
+/// 只存在一层时，`ValidWithWarnings` 才用来表示"有效但覆盖不完整"。
+fn decide_status(
+    has_layer1: bool,
+    layer1_valid: bool,
+    has_layer2: bool,
+    layer2_valid: bool,
+) -> VerifyStatus {
+    match (has_layer1, has_layer2) {
+        // No signatures at all.
+        // 完全没有签名。
+        (false, false) => VerifyStatus::Unsigned,
+
+        // Both layers present — require both valid, otherwise FAIL.
+        // 两层都在 — 要求两层都有效，否则 FAIL。
+        (true, true) => {
+            if layer1_valid && layer2_valid {
+                VerifyStatus::Valid
+            } else {
+                VerifyStatus::Invalid
+            }
+        }
+
+        // Only one layer present — valid => partial coverage; invalid => FAIL.
+        // 只有一层 — 有效 => 覆盖不完整；无效 => FAIL。
+        (true, false) => {
+            if layer1_valid {
+                VerifyStatus::ValidWithWarnings
+            } else {
+                VerifyStatus::Invalid
+            }
+        }
+        (false, true) => {
+            if layer2_valid {
+                VerifyStatus::ValidWithWarnings
+            } else {
+                VerifyStatus::Invalid
+            }
+        }
+    }
+}
+
+// =============================================================================
 // Merging / 合并
 // =============================================================================
 
@@ -1018,6 +1071,90 @@ fn extract_cn_from_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test: decide_status covers SIG-L1/L2 regression — a Layer 1 failure
+    /// while Layer 2 is valid must produce Invalid, not ValidWithWarnings.
+    ///
+    /// 测试：decide_status 覆盖 SIG-L1/L2 回归 — Layer 1 失败但 Layer 2
+    /// 有效时必须产出 Invalid，而非 ValidWithWarnings。
+    #[test]
+    fn test_decide_status_both_present_one_invalid_is_invalid() {
+        // Layer1 FAIL, Layer2 OK  → Invalid (was previously ValidWithWarnings).
+        // Layer1 失败，Layer2 成功 → Invalid（旧实现会误判为 ValidWithWarnings）。
+        assert_eq!(
+            decide_status(true, false, true, true),
+            VerifyStatus::Invalid,
+            "L1 fail + L2 pass (both present) must be Invalid, not ValidWithWarnings"
+        );
+        // Layer1 OK, Layer2 FAIL  → Invalid.
+        assert_eq!(
+            decide_status(true, true, true, false),
+            VerifyStatus::Invalid,
+            "L1 pass + L2 fail (both present) must be Invalid"
+        );
+        // Both fail → Invalid.
+        assert_eq!(
+            decide_status(true, false, true, false),
+            VerifyStatus::Invalid,
+            "both layers failing must be Invalid"
+        );
+    }
+
+    /// Test: decide_status — both layers valid produces Valid.
+    /// 测试：decide_status — 两层都有效产出 Valid。
+    #[test]
+    fn test_decide_status_both_valid_is_valid() {
+        assert_eq!(
+            decide_status(true, true, true, true),
+            VerifyStatus::Valid
+        );
+    }
+
+    /// Test: decide_status — neither layer present produces Unsigned.
+    /// 测试：decide_status — 两层都不存在产出 Unsigned。
+    #[test]
+    fn test_decide_status_neither_present_is_unsigned() {
+        assert_eq!(
+            decide_status(false, false, false, false),
+            VerifyStatus::Unsigned
+        );
+        // layer1_valid/layer2_valid flags should not matter when absent.
+        // layer1_valid/layer2_valid 标志在"不存在"时应被忽略。
+        assert_eq!(
+            decide_status(false, true, false, true),
+            VerifyStatus::Unsigned
+        );
+    }
+
+    /// Test: decide_status — only one layer present, valid → ValidWithWarnings.
+    /// 测试：decide_status — 仅一层存在且有效 → ValidWithWarnings。
+    #[test]
+    fn test_decide_status_single_layer_valid_is_partial() {
+        assert_eq!(
+            decide_status(true, true, false, false),
+            VerifyStatus::ValidWithWarnings,
+            "only L1 present and valid → ValidWithWarnings"
+        );
+        assert_eq!(
+            decide_status(false, false, true, true),
+            VerifyStatus::ValidWithWarnings,
+            "only L2 present and valid → ValidWithWarnings"
+        );
+    }
+
+    /// Test: decide_status — only one layer present, invalid → Invalid.
+    /// 测试：decide_status — 仅一层存在且无效 → Invalid。
+    #[test]
+    fn test_decide_status_single_layer_invalid_is_invalid() {
+        assert_eq!(
+            decide_status(true, false, false, false),
+            VerifyStatus::Invalid
+        );
+        assert_eq!(
+            decide_status(false, false, true, false),
+            VerifyStatus::Invalid
+        );
+    }
 
     /// Test: VerifyStatus enum comparison works correctly.
     /// 测试：VerifyStatus 枚举比较正常工作。
