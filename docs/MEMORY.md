@@ -75,10 +75,10 @@ unicodex/
 
 ## 5. 关键约定与风险（避免后续 Agent 踩坑）
 
-1. **版本号只在 `Cargo.toml` + commit message 维护，git tag 长期缺失**：
-   仅有 3 个 tag（`v0.0.0-alpha.1`/`v0.1.0-alpha.1`/`v0.1.0-alpha.2`，均 2026-02-16）。
-   **v0.2.0/v0.3.0/v0.4.0 从未打 tag**。⚠️ 不要用 `git log vX.Y.Z..HEAD` 做版本边界（会失败）。
-   → 待办：回补 tag（见 §6），并落实 CLAUDE.md "关键节点打 tag"。
+1. **版本封顶 `v0.x.x`（强约束）**：在**全部功能彻底完成前**，版本号一律保持 `v0.x.x`，**禁止设为 `v1.0.0`**。
+   `v1.0.0` 仅作为"全功能完成"的终点里程碑 M6。详见 [memory/decisions.md](memory/decisions.md) ADR-011。
+2. **git tag**：已回补完整（`v0.0.0-alpha.1` → `v0.4.0-alpha.2`，共 7 个 annotated）。
+   今后**每次版本发布必须打 tag**（CLAUDE.md "关键节点设置 tag"），且 tag 与 `Cargo.toml` 版本一致。
 2. **`temp_test/` 是未跟踪的测试 scratch**（145M：`ucx.exe` + 922 文件 + 50 个测试私钥），
    已加入 `.gitignore`。正式测试报告在 `docs/test/problems/`，**勿把 temp_test 当正式产物**。
 3. **加密在签名之前**（Encrypt-then-Sign，ADR-004）：签名保护密文，无需解密即可验签。

@@ -44,9 +44,9 @@
 
 ## 四、运维待办
 
-- **回补缺失 git tag**：v0.4.0-alpha.1 → `58dc0d4`、v0.4.0-alpha.2 → `b56d1ec`，落实 CLAUDE.md「关键节点打 tag」要求（历史 v0.2.0/v0.3.0/v0.4.0 系列均未打 tag）。
-- **评估清理 `temp_test/`**：145M 可再生 scratch 目录，已 gitignore，评估是否清理。
-- **创建 `docs/errors.md`**：关闭 NEW-R1-03。
+- **创建 `docs/errors.md`**：错误码对照表，关闭 NEW-R1-03。
+
+> 已完成：git tag 回补（v0.0.0-alpha.1 → v0.4.0-alpha.2，7 个）；temp_test/ 已决定保留并 gitignore。
 
 ---
 

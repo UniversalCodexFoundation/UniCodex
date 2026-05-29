@@ -70,9 +70,10 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 
 | M3 - 完善工具链 | Phase 2 | v0.2.0-alpha.1 | 版本管理 + CLI 增强 + ucx check |
 | M4 - 签名验证 | Phase 3 | v0.3.0-alpha.1 | 双层签名 + 证书链 + 完整验证 |
 | M5 - 加密支持 | Phase 4 | v0.4.0-alpha.2（当前止于此） | 章节/段落加密 + 多密钥方式；进入 beta 待评估 |
-| M6 - 1.0 发布 | Phase 5 | v1.0.0 | 稳定版本 + 多语言 SDK + 服务 |
+| M6 - 1.0 发布 | Phase 5 | v1.0.0（全功能完成的终点，见下约束） | 稳定版本 + 多语言 SDK + 服务 |
 
-> 注：git tag 目前仅 3 个（v0.0.0-alpha.1 / v0.1.0-alpha.1 / v0.1.0-alpha.2）；v0.2.0 起的版本均未打 tag，待办见 [../TODO.md]。
+> 注：git tag 已回补完整（v0.0.0-alpha.1 → v0.4.0-alpha.2，共 7 个 annotated）。
+> **版本约束**：全功能彻底完成前版本号一律 `v0.x.x`，**禁止 `v1.0.0`**（见 [../memory/decisions.md] ADR-011）；M6 是唯一进入 v1.0.0 的节点。
 
 ## 6. 规范文档与模块对照
 
