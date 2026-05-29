@@ -21,3 +21,7 @@ Desktop.ini
 
 # 版本快照（ucx version auto 自动生成）
 .ucx-snapshot.json
+
+# 测试临时目录（黑盒回归测试的可再生 scratch：二进制、测试密钥、样本数据等）
+# 正式测试报告已归档至 docs/test/problems/，此目录无需纳入版本控制
+temp_test/

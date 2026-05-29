@@ -236,4 +236,4 @@ ucx-types ──┬──→ ucx-init ──────────────
 
 ---
 
-*本计划由蜂群团队执行，执行过程中持续更新 `docs/development/current-progress.md`*
+*本计划由蜂群团队执行，执行过程中持续更新 `docs/memory/progress.md`*
