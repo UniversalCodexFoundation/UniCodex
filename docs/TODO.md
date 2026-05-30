@@ -20,11 +20,41 @@
 | L-1 | 路径未显式拒绝 NUL/控制字符（**file 引用**部分；title 见下） | Low | 共享校验器覆盖 |
 | L-2 | 空/纯空白证书 CN 被接受 | Low | 并入 M-1 校验 |
 
-**本轮新增的后续待办**（非阻塞）：
-- `AUD-01` `struct.json` 的 **`title` 字段** NUL/控制字符仍未校验（旧 NEW-R3-02 的剩余部分，仅 file 引用已覆盖）。Low。
-- `AUD-02` `codex.json`/`struct.json` 类型（`Codex`/`Structure`/`StructureNode` 等）的 `deny_unknown_fields`：需先核对 docs/02 规范字段完备性，避免拒绝合法/扩展字段。Medium（一致性）。
-- `AUD-03` `ucx-version` 的 struct.json/snapshot 读取路径同样施加大小/节点上限（与 M-3 对齐）。Low。
-- `AUD-04` 输出父目录自动创建在各子命令间不一致（统一 `create_dir_all(parent)` 或统一报错并在 docs 记录约定）。Low（一致性/UX）。
+### 〇.2 第二轮（静态审查，commit 08e3b87，待回归）
+
+> 精简静态审查（9 crate × 5 维度 → 对抗式验证，68 发现，7 High）修复全部 7 High + 多个 Medium，均有单元回归 + 真实 CLI 端到端再验证。详见 ADR-014。
+
+| 类别 | 问题 | 严重度 | 修复 |
+|------|------|--------|------|
+| DoS | M-3 上界仅 build 生效，check/dry_run 绕过；ucx-version 无上界（**闭合 AUD-03**） | High | 上界下沉 `ucx-types::structure` 共享，强制于所有入口 |
+| DoS | 解压炸弹：ucx-parse 解压路径无上界 | High | `read_entry_capped`（≤512MiB/条目，take 截断检出） |
+| Panic | `find_signing_block` cd_offset 越界 OOB + `8+block_size` 溢出（含 verify() 同源 panic） | High | cd_offset≤len 守卫 + checked 算术 |
+| 数据丢失 | CRLF 清单 `split("\n\n")` 丢全部条目 | High | 解析前 `\r\n→\n` 规范化 |
+| 凭据 | 口令明文回显终端 + 注释谎称不回显 | High | TTY 感知：交互 rpassword 无回显、管道读 stdin |
+| 数据丢失 | encrypt/decrypt 就地非原子覆盖，失败丢原稿 | High | `atomic_write`（temp+fsync+rename） |
+| 认证 | 分块缺 chunk_count 绑定，尾块可静默截断 | Medium | 逐块 AAD 绑 `chunk_count`（**wire 变更，见 AUD-05**） |
+| 规范 | `write_ucxe` 丢 raw_flags 保留位 | Medium | 写 `raw_flags` |
+| 一致性 | build 缺 check 已有必填字段校验 | Medium | 补 title/creators 校验 |
+| 一致性 | init [series] 模板 `total` 与 deny_unknown_fields 冲突；[dates] 重复 | Medium | 删 total、改 dates 注释 |
+| 安全 | 口令/解密明文未 zeroize | Medium | `Zeroizing` 包装 |
+| 一致性 | `version set` 静默降级 | Medium | 降级 warning + `UcxVersion` 派生 Ord |
+| 性能 | tokio 未使用 | Low | 移除依赖 |
+| 风格 | 多 crate 未过 cargo fmt | Low | 全工作区 cargo fmt |
+
+**本轮新增的后续待办**（非阻塞，已确认但本批未改）：
+- `AUD-01` `struct.json` 的 **`title` 字段** NUL/控制字符仍未校验（旧 NEW-R3-02 剩余；file 引用已覆盖）。Low。
+- `AUD-02` `Codex`/`Structure`/`StructureNode` 的 `deny_unknown_fields`：需先核对 docs/02 字段完备性。Medium。
+- `AUD-04` 输出父目录自动创建在各子命令间不一致。Low。
+- `AUD-05` **【重要·破坏性】分块 AAD 绑定 `chunk_count` 是 wire 变更**：需同步全部 12 个语言 SDK 的分块加解密（含本会话刚发布的 **Cangjie**），否则分块文件跨实现验证失败。已更新 `sdk/UCX-FORMAT.md §7.7`。High（互操作）。
+- `AUD-06` `ucx-parse::verify_hashes` 对清单声明但缺失的文件直接报错中止，应记为 invalid 继续核验。Medium。
+- `AUD-07` `ucx-verify::verify()` 不内联 §5 逐文件完整性，Layer-1-only 归档篡改章节(保持 MANIFEST)仍判 ValidWithWarnings；至少修正模块文档表述或内联 §5。Medium。
+- `AUD-08` `ucx-version` auto 路径 NewChapter 缺防降级（与手动 chapter 不一致）。Medium。
+- `AUD-09` `find_eocd` 正向扫描取最低偏移 EOCD，与标准/文档反向扫描相悖（伪 EOCD 歧义）。Medium。
+- `AUD-10` `ucx-build::create_ucx_archive`/`ucx-sign::sign` 整包驻留内存/重压缩（大归档峰值内存高），可流式优化。Medium（性能）。
+- `AUD-11` `from_manifest_str` 缺必需字段的条目静默丢弃（应报错）。Medium。
+- `AUD-12` init `--force` 覆盖 chapter-001.md/struct.json、文件名冲突静默丢失。Medium。
+- `AUD-13` `--key` 经命令行泄露进程表/shell 历史：补 `--key-file`/env 或文档告警。Medium。
+- `AUD-14` 杂项 Low/Info：dead code(`compute_blake3_hash`/`get_cd_size`/`decode_digest`)、过时注释('RSA/EC'/markdown)、`trim_end_matches(".md")`、`ext=="md"` 大小写、L2 未校验 `sig_algorithm_id==0x0001`、AES-CBC+--key 前置校验、open() 双开文件等。
 
 ---
 

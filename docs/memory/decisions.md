@@ -348,4 +348,28 @@ SDK 版本号为 `X.Y.Z`：
 
 ---
 
-*后续决策追加于此（ADR-014…）。*
+## ADR-014: 第二轮静态审查修复——对称化 DoS 上界 / panic 清除 / 分块抗截断
+
+**日期**：2026-05-31 · **状态**：已决定（commit `08e3b87`）
+
+**背景**：
+一次精简可靠的全仓库静态审查（9 crate × 5 维度 → 对抗式验证）产出 68 条发现（7 High），暴露了第一轮入侵测试未覆盖的深层问题，且其中一条直接指出第一轮 M-3 修复**不完整**。
+
+**决定**（贯穿一条主线：**安全语义必须在所有入口对称、整数算术对不可信长度必须 checked、认证必须覆盖结构元数据**）：
+1. **DoS 上界对称化**：M-3 的 struct.json 大小/节点/深度上界从 `ucx-build` 一处下沉到 `ucx-types::structure`（共享常量 + `enforce_structure_limits`），并在所有解析入口强制——`ucx-build` 的 build/dry_run/check（旧版仅 build 有）与 `ucx-version` 的 auto/chapter/snapshot。消费侧 `ucx-parse` 解压路径新增解压炸弹上界（`read_entry_capped`，不信任声明大小、`take(512MiB+1)` 截断检出）。
+2. **panic 清除**：`ucx-sign::find_signing_block` 对攻击者可控的 `cd_offset`/`block_size` 加 `cd_offset<=len` 守卫与 checked 算术，消除越界切片与整数溢出 panic（同时根除 `ucx-verify::verify()` 的同源 panic）。
+3. **分块抗截断**：分块 AEAD 的逐块 AAD 绑入 `chunk_count`（`file_aad ‖ u32_le(chunk_count)`），使删除尾部分块的截断攻击认证失败。**这是 wire/AAD 变更**，需同步全部 SDK（见 TODO AUD-05）。
+4. **凭据处理**：口令读取改为 TTY 感知（交互 rpassword 无回显，管道/CI 读 stdin——Windows 上 rpassword 直读控制台会忽略重定向 stdin 并挂起，纯 rpassword 会破坏脚本化调用，实机再验证已捕获此回归）；口令与解密明文 `zeroize`；encrypt/decrypt 改原子写（temp+fsync+rename）防就地覆盖丢稿。
+
+**理由**：
+- 第一轮与第二轮的共同根因都是"同一安全语义在不同入口/不同算术路径上不一致"。对称化 + 共享单一实现是结构性根治。
+- 每条修复均有单元回归测试 + 真实 ucx CLI 端到端再验证（pre-fix 可复现、post-fix 拒绝/正确）。
+
+**影响**：
+- `ucx-types::structure` 成为 struct.json DoS 上界的唯一真值，`ucx-build`/`ucx-version` 共用。
+- **分块密文 wire 变更**：旧分块文件与新版互不兼容（pre-1.0 可接受）；所有语言 SDK 的分块加解密必须同步绑定 `chunk_count`（含本会话刚发布的 Cangjie SDK）。
+- 新增依赖：`unicodex-core` + `rpassword`（无回显口令）、`zeroize`（已是 workspace 依赖）；移除未使用的 `tokio`。
+
+---
+
+*后续决策追加于此（ADR-015…）。*

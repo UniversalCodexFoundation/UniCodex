@@ -133,6 +133,17 @@ git tag 仅 3 个，且均打于 2026-02-16：`v0.0.0-alpha.1` / `v0.1.0-alpha.1
 
 详见 [decisions.md](./decisions.md) ADR-013、[../TODO.md](../TODO.md)。
 
+### 第二轮（静态审查，commit `08e3b87`）
+
+精简可靠的全仓库静态审查（9 crate × 5 维度 → 对抗式验证，68 条发现，7 High）补齐了第一轮入侵阶段未覆盖的深度，并修复全部 7 High + 多个 Medium：
+- **DoS 上界对称化**：M-3 struct.json 上界下沉 `ucx-types::structure` 共享，强制于 build/dry_run/check 与 ucx-version 全部入口（旧版仅 build）；`ucx-parse` 解压路径新增解压炸弹上界。
+- **panic 清除**：`ucx-sign::find_signing_block` 加 cd_offset 守卫 + checked 算术（根除 verify() 同源 panic）。
+- **分块抗截断**：逐块 AAD 绑入 chunk_count（wire 变更，需同步 SDK）。
+- **凭据**：口令 TTY 感知无回显（管道兼容）、口令/明文 zeroize、encrypt/decrypt 原子写。
+- **其他**：CRLF 清单数据丢失、build 必填字段、init 模板与 deny_unknown_fields 冲突、version set 降级告警、移除 tokio、全工作区 cargo fmt。
+
+详见 [decisions.md](./decisions.md) ADR-014。
+
 ---
 
 ## 当前状态 / 下一步

@@ -84,7 +84,12 @@ unicodex/
    已加入 `.gitignore`。正式测试报告在 `docs/test/problems/`，**勿把 temp_test 当正式产物**。
 4. **加密在签名之前**（Encrypt-then-Sign，ADR-004）：签名保护密文，无需解密即可验签。
 5. **错误文案防 oracle**：解密失败统一返回 `decryption failed`，不泄露具体原因。
-6. **路径与输入安全（共享校验器）**：ZIP 条目名与 struct.json `file` 引用统一经 `ucx-types::path_safety::validate_safe_relative_path` 校验——拒绝 `../`/反斜杠/绝对(含 Windows 盘符)/`Path::is_absolute`/Windows 保留名/NUL 与控制字符/尾随点空格。生产侧（`ucx-build`）与消费侧（`ucx-parse::extract_to`）**共用同一函数**，禁止再各写一份（防漂移，曾导致 Zip-Slip C-1）。详见 ADR-013。`title` 字段 NUL 仍待校验（AUD-01）。
+6. **路径与输入安全（共享校验器）**：ZIP 条目名与 struct.json `file` 引用统一经 `ucx-types::path_safety::validate_safe_relative_path` 校验——拒绝 `../`/反斜杠/绝对(含 Windows 盘符)/`Path::is_absolute`/Windows 保留名/NUL 与控制字符/尾随点空格。生产侧（`ucx-build`）与消费侧（`ucx-parse::extract_to`）**共用同一函数**，禁止再各写一份（防漂移，曾导致 Zip-Slip C-1）。详见 ADR-013/014。`title` 字段 NUL 仍待校验（AUD-01）。
+9. **两轮安全审查已完成**（commit `5e47c67` + `08e3b87`，ADR-013/014）。要点：
+   - **struct.json DoS 上界**唯一真值在 `ucx-types::structure`（`MAX_STRUCT_JSON_BYTES=16MiB`/`MAX_STRUCT_NODES=100k`/`MAX_STRUCT_DEPTH=64` + `enforce_structure_limits`），`ucx-build`(build/dry_run/check) 与 `ucx-version` 共用；`ucx-parse` 解压有 512MiB/条目上界（解压炸弹）。
+   - **分块 AEAD 的逐块 AAD = `file_aad ‖ u32_le(chunk_count)`**（抗截断，**interop 关键**：所有 SDK 必须同绑 chunk_count，否则分块文件跨实现验证失败；旧分块文件与新版不兼容）。
+   - **口令读取 TTY 感知**：交互无回显(rpassword)，管道/CI 读 stdin（勿改回纯 rpassword——Windows 会挂起）；口令/解密明文 `zeroize`；encrypt/decrypt **原子写**（temp+fsync+rename）。
+   - `find_signing_block` 等对攻击者可控偏移/长度一律 checked 算术 + `<=len` 守卫（绝不 panic）。
 7. **commit 节奏**：每完成一部分即 commit，conventional commits（`feat/fix/docs/chore` + scope）。
 8. **多语言 SDK 版本号方案**（Phase 5）：SDK 版本 `X.Y.Z` 中 `X.Y` = 所支持的 UCX 标准版本（**前两位相同 ⇒ 对外 API 相同**），`Z` = SDK 自身补丁号；旧标准线持续发补丁、不废弃（类 Python 多版本并行）。当前全部 SDK 初始版本 = **v0.4.0**（对应 UCX 标准 0.4.x）。详见 [memory/decisions.md](memory/decisions.md) ADR-012。
 

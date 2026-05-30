@@ -467,7 +467,13 @@ repeat chunk_count times:
     [ ciphertext            : chunk_ciphertext_size bytes ]   ; without tag
     [ tag                   : 16 bytes ]                      ; per-chunk AEAD tag
 ```
-Each chunk is `AEAD.encrypt(key, nonce_i, plaintext_chunk, aad)` with the **same file-level AAD** (§7.6); decryption verifies each chunk's tag and concatenates. `chunked.rs:270-377`.
+Each chunk is `AEAD.encrypt(key, nonce_i, plaintext_chunk, chunk_aad)` where the per-chunk AAD **binds the total chunk_count** to the file-level AAD (§7.6):
+```
+chunk_aad = file_aad  ‖  u32_le(chunk_count)        ; file_aad = header(8)‖kdf_params‖salt
+```
+This is identical for every chunk in the file. Binding `chunk_count` is **mandatory** (security): without it, an attacker can delete trailing chunks and decrement the serialized `chunk_count`, and the surviving chunks — keeping their original index/nonce/key/AAD — still authenticate, silently truncating the plaintext with no error. With `chunk_count` bound, the truncated file's smaller declared count yields a different AAD and every chunk fails authentication. Decryption recomputes `chunk_aad` from the **declared** `chunk_count`, verifies each chunk's tag, and concatenates. `chunked.rs:118-137 (build_chunk_aad), 270-377`.
+
+> **Wire change (UCX 0.4.x reference impl, 2026-05-31):** earlier chunked builds used the bare `file_aad` for chunks; the `‖ u32_le(chunk_count)` binding was added to close the truncation attack. **All SDKs MUST bind `chunk_count` identically** (encrypt and decrypt), or chunked files will fail cross-implementation authentication. Non-chunked AEAD/CBC AAD is unchanged.
 
 ### 7.8 Key handling, passphrase NFC, direct keys
 
