@@ -119,6 +119,28 @@ pub fn create_self_signed_cert(
         ));
     }
 
+    // --- Validate the distinguished-name fields (CN, optional organization) ---
+    // The Common Name is rendered verbatim in human-readable TRUST output
+    // (`cert info`, `verify --show-signers`). Allowing newlines / control
+    // characters in it would let a crafted self-signed certificate forge
+    // convincing field lines (e.g. a fake `Issuer: CN=Trusted`) in the very
+    // report a reviewer relies on — an output/log-injection on a trust-display
+    // path. We also require a non-empty, non-whitespace CN so every signer has a
+    // meaningful identity. This mirrors the strict `signer_id` hardening
+    // (see `validate_signer_id`) so both trust-facing identifiers are validated
+    // consistently rather than one strict and one wide open.
+    // --- 校验可分辨名称字段（CN、可选 organization）---
+    // Common Name 会在人类可读的**信任**输出（`cert info`、`verify --show-signers`）
+    // 中原样渲染。允许其中含换行/控制字符，将使构造的自签名证书在审阅者依赖的报告中
+    // 伪造貌似可信的字段行（如伪造 `Issuer: CN=Trusted`）——信任展示路径上的
+    // 输出/日志注入。同时要求 CN 非空、非纯空白，使每个签名者都有有意义的身份。
+    // 此处与严格的 `signer_id` 加固（见 `validate_signer_id`）保持一致，使两个
+    // 面向信任的标识符校验一致，而非一严一松。
+    validate_cert_dn_field(&options.common_name, "Common Name (CN)", true)?;
+    if let Some(ref org) = options.organization {
+        validate_cert_dn_field(org, "organization", false)?;
+    }
+
     // --- Convert the ed25519-dalek key to PKCS#8 DER for rcgen ---
     // 将 ed25519-dalek 密钥转换为 PKCS#8 DER 格式，供 rcgen 使用。
     let pkcs8_der = signing_key
@@ -177,6 +199,54 @@ pub fn create_self_signed_cert(
     // Return DER-encoded certificate bytes.
     // 返回 DER 编码的证书字节。
     Ok(cert.der().to_vec())
+}
+
+/// Validate a certificate distinguished-name field (CN / organization).
+///
+/// Rejects any control character (so the value cannot inject newlines or other
+/// control sequences into trust-display output) and bounds the length. When
+/// `require_non_empty` is set (used for the Common Name), also rejects an empty
+/// or whitespace-only value so every signer carries a meaningful identity.
+///
+/// 校验证书可分辨名称字段（CN / organization）。
+/// 拒绝任何控制字符（使该值无法向信任展示输出注入换行或其他控制序列）并限制长度。
+/// 当设置 `require_non_empty`（用于 Common Name）时，同时拒绝空或纯空白值，
+/// 使每个签名者都携带有意义的身份。
+fn validate_cert_dn_field(
+    value: &str,
+    field: &str,
+    require_non_empty: bool,
+) -> Result<(), SignError> {
+    // Non-empty requirement (CN only). / 非空要求（仅 CN）。
+    if require_non_empty && value.trim().is_empty() {
+        return Err(SignError::CertificateError(format!(
+            "certificate {field} must not be empty or whitespace-only / \
+             证书 {field} 不得为空或纯空白"
+        )));
+    }
+
+    // No control characters. The offending value is escaped in the message so
+    // the error itself cannot re-emit the injected control characters.
+    // 禁止控制字符。错误消息中对违规值做转义，使错误本身不会重新输出注入的控制字符。
+    if value.chars().any(|c| c.is_control()) {
+        return Err(SignError::CertificateError(format!(
+            "certificate {field} contains a control character (e.g. a newline), which is not allowed / \
+             证书 {field} 含控制字符（如换行），不允许: '{}'",
+            value.escape_debug()
+        )));
+    }
+
+    // Bound the length to avoid pathological distinguished names.
+    // 限制长度以避免病态的可分辨名称。
+    const MAX_DN_FIELD_LEN: usize = 256;
+    if value.chars().count() > MAX_DN_FIELD_LEN {
+        return Err(SignError::CertificateError(format!(
+            "certificate {field} exceeds {MAX_DN_FIELD_LEN} characters / \
+             证书 {field} 超过 {MAX_DN_FIELD_LEN} 字符"
+        )));
+    }
+
+    Ok(())
 }
 
 // =============================================================================
@@ -760,6 +830,77 @@ mod tests {
             create_self_signed_cert(&signing_key, &options3).is_ok(),
             "36500 days should be accepted (boundary)"
         );
+    }
+
+    /// Security regression (M-1): a Common Name containing a newline or other
+    /// control character must be REJECTED, so a crafted certificate cannot forge
+    /// field lines (e.g. a fake `Issuer: CN=Trusted`) in trust-display output.
+    ///
+    /// 安全回归（M-1）：含换行或其他控制字符的 Common Name 必须被**拒绝**，
+    /// 使构造的证书无法在信任展示输出中伪造字段行（如伪造 `Issuer: CN=Trusted`）。
+    #[test]
+    fn test_create_cert_rejects_cn_with_control_chars() {
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
+
+        for evil_cn in ["Evil\nIssuer: CN=Trusted", "x\u{0}y", "tab\there", "cr\rhere"] {
+            let options = CertOptions {
+                common_name: evil_cn.to_string(),
+                days_valid: 30,
+                organization: None,
+            };
+            let result = create_self_signed_cert(&signing_key, &options);
+            assert!(
+                result.is_err(),
+                "CN with control char must be rejected: {evil_cn:?}"
+            );
+            // The error message itself must not leak a raw newline/NUL.
+            // 错误消息本身不得泄露原始换行/NUL。
+            let msg = format!("{}", result.unwrap_err());
+            assert!(!msg.contains('\n') && !msg.contains('\u{0}'));
+        }
+    }
+
+    /// Security regression (L-2): an empty or whitespace-only Common Name must be
+    /// rejected so every signer has a meaningful identity.
+    ///
+    /// 安全回归（L-2）：空或纯空白的 Common Name 必须被拒绝，使每个签名者都有
+    /// 有意义的身份。
+    #[test]
+    fn test_create_cert_rejects_empty_cn() {
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
+
+        for empty_cn in ["", "   ", "\t "] {
+            let options = CertOptions {
+                common_name: empty_cn.to_string(),
+                days_valid: 30,
+                organization: None,
+            };
+            assert!(
+                create_self_signed_cert(&signing_key, &options).is_err(),
+                "empty/whitespace CN must be rejected: {empty_cn:?}"
+            );
+        }
+    }
+
+    /// A normal CN containing an apostrophe or quote must still be ACCEPTED
+    /// (the control-char check must not over-restrict ordinary printable names).
+    ///
+    /// 含撇号或引号的正常 CN 必须仍被**接受**（控制字符检查不得过度限制普通可打印名）。
+    #[test]
+    fn test_create_cert_accepts_printable_cn_with_punctuation() {
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
+
+        for ok_cn in ["O'Brien Publishing", "\"Acme\" Press", "墨染千枝 / Author"] {
+            let options = CertOptions {
+                common_name: ok_cn.to_string(),
+                days_valid: 30,
+                organization: None,
+            };
+            assert!(
+                create_self_signed_cert(&signing_key, &options).is_ok(),
+                "printable CN should be accepted: {ok_cn:?}"
+            );
+        }
     }
 
     /// Test: certificate with organization includes the O field.

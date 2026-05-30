@@ -477,7 +477,12 @@ impl UcxArchive {
     ///
     /// # Errors / 错误
     ///
-    /// - `PathTraversal` if any entry contains `..` or starts with `/` (security).
+    /// - `PathTraversal` if any entry name is not a safe relative path — i.e. it
+    ///   is absolute (incl. a Windows drive letter like `C:/` or `C:\`), contains
+    ///   a backslash, a `..` segment, a control character, a Windows reserved
+    ///   device name, or a trailing dot/space (security: prevents Zip-Slip
+    ///   arbitrary file write). Validated via the shared
+    ///   [`ucx_types::path_safety::validate_safe_relative_path`].
     /// - `Io` for filesystem errors (creating directories, writing files).
     /// - `Zip` for archive reading errors.
     pub fn extract_to(&mut self, output_dir: &Path) -> Result<Vec<String>, ParseError> {
@@ -502,12 +507,29 @@ impl UcxArchive {
                 continue;
             }
 
-            // Security: reject entries containing ".." or starting with "/" to
-            // prevent path traversal attacks.
-            // 安全：拒绝包含 ".." 或以 "/" 开头的条目，防止路径遍历攻击。
-            if entry_name.contains("..") || entry_name.starts_with('/') {
+            // Security (Zip-Slip / arbitrary file write): validate the entry
+            // name with the SAME shared validator the producer uses, before
+            // joining it to `output_dir`. The previous guard only checked for
+            // ".." and a leading "/", which let Windows drive-absolute names
+            // (`C:/Windows/Temp/x`, `C:\...`) and backslash-absolute names slip
+            // through — and `output_dir.join(absolute)` DISCARDS `output_dir`,
+            // landing the attacker's file at an arbitrary absolute location
+            // while `unpack` reported success. The shared validator rejects
+            // absolute paths (incl. drive letters), backslashes, `..` segments,
+            // control characters, reserved names, and trailing dot/space, so any
+            // accepted entry is a strict relative path that stays under
+            // `output_dir`.
+            //
+            // 安全（Zip-Slip / 任意文件写）：在 join 到 `output_dir` 之前，用与
+            // 生产侧**相同**的共享校验器校验条目名。旧守卫只查 ".." 与以 "/" 开头，
+            // 放过了 Windows 盘符绝对名（`C:/Windows/Temp/x`、`C:\...`）与反斜杠
+            // 绝对名——而 `output_dir.join(绝对路径)` 会**丢弃** `output_dir`，使
+            // 攻击者文件落到任意绝对位置，且 `unpack` 仍报成功。共享校验器拒绝
+            // 绝对路径（含盘符）、反斜杠、`..` 段、控制字符、保留名与尾随点/空格，
+            // 因此任何被接受的条目都是严格相对路径、必落在 `output_dir` 之下。
+            if let Err(e) = ucx_types::path_safety::validate_safe_relative_path(&entry_name) {
                 return Err(ParseError::PathTraversal(format!(
-                    "unsafe entry name rejected: '{entry_name}'"
+                    "unsafe entry name rejected: {e}"
                 )));
             }
 

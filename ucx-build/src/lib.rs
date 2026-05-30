@@ -243,6 +243,25 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
         ));
     }
 
+    // M-3: bound struct.json size BEFORE reading it entirely into memory, to
+    // prevent a parse-amplification DoS — a multi-MB / multi-million-node file can
+    // expand to hundreds of MB of parsed structures (an audited 76 MB / 2M-node
+    // input consumed ~589 MB RAM). A legitimate novel's struct.json is KB-scale;
+    // 16 MiB is a very generous ceiling.
+    // M-3：在整体读入内存**之前**限制 struct.json 大小，防止解析放大 DoS——
+    // 数 MB / 数百万节点的文件可膨胀为数百 MB 的解析结构（审计中 76 MB / 2M 节点
+    // 输入占用约 589 MB 内存）。合法小说的 struct.json 仅 KB 级；16 MiB 已是非常
+    // 宽松的上限。
+    let struct_meta = fs::metadata(&struct_path)?;
+    if struct_meta.len() > MAX_STRUCT_JSON_BYTES {
+        return Err(BuildError::InvalidStructure(format!(
+            "content/struct.json is too large ({} bytes; limit {MAX_STRUCT_JSON_BYTES}) / \
+             content/struct.json 过大（{} 字节；上限 {MAX_STRUCT_JSON_BYTES}）",
+            struct_meta.len(),
+            struct_meta.len()
+        )));
+    }
+
     let struct_content = fs::read_to_string(&struct_path)?;
     let structure: ucx_types::Structure = serde_json::from_str(&struct_content)
         .map_err(|e| BuildError::ConfigParse(format!("struct.json parse error: {e}")))?;
@@ -256,6 +275,11 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     // Step 3.5: Validate struct.json constraints.
     // 步骤 3.5：校验 struct.json 约束条件。
     // -------------------------------------------------------------------------
+    // M-3: bound the total node count and nesting depth so a maliciously broad or
+    // deep tree cannot exhaust memory/stack downstream.
+    // M-3：限制节点总数与嵌套深度，使恶意的超宽或超深树无法在后续耗尽内存/栈。
+    enforce_structure_limits(&structure.structure)?;
+
     // P-005: Validate that `file` and `children` are mutually exclusive.
     // P-005：校验 `file` 和 `children` 互斥。
     validate_structure_nodes(&structure.structure)?;
@@ -884,109 +908,92 @@ fn validate_structure_nodes(nodes: &[ucx_types::StructureNode]) -> Result<(), Bu
     Ok(())
 }
 
-/// Validate that a `file` reference in `struct.json` is a safe relative path.
-///
-/// Rejects:
-/// - absolute paths (leading `/`, `\`, or Windows drive letter like `C:`);
-/// - any backslash (`\`), which is ambiguous across platforms;
-/// - any `..` path component, which could escape the `content/` root;
-/// - Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9),
-///   case-insensitive, as either the entire basename or the basename before
-///   its extension — because on Windows they cannot be opened as ordinary files.
-///
-/// These checks mirror the ZIP-entry hardening in `ucx-parse::extract_to` and
-/// reject the problem before the archive is produced.
-///
-/// 校验 `struct.json` 中的 `file` 引用是否为安全的相对路径。
-/// 拒绝：绝对路径（以 `/`、`\` 开头或 Windows 盘符如 `C:`）、反斜杠、
-/// `..` 路径段、以及 Windows 保留设备名（不区分大小写）。
-fn validate_structure_file_path(title: &str, file: &str) -> Result<(), BuildError> {
-    // 1. Empty string rejected.
-    // 1. 空串拒绝。
-    if file.is_empty() {
-        return Err(BuildError::InvalidStructure(format!(
-            "node '{title}' has an empty 'file' reference"
-        )));
-    }
+/// Maximum accepted byte size of `content/struct.json` (M-3 DoS guard).
+/// 16 MiB — orders of magnitude above any legitimate novel structure.
+/// `content/struct.json` 接受的最大字节大小（M-3 DoS 防护）。16 MiB。
+const MAX_STRUCT_JSON_BYTES: u64 = 16 * 1024 * 1024;
 
-    // 2. No backslashes at all — paths must be forward-slash only, matching the
-    //    ZIP entry convention. This also preempts Windows-drive-letter attacks
-    //    such as `C:\foo`.
-    // 2. 禁止出现反斜杠 — 路径必须仅使用正斜杠，符合 ZIP 条目约定。
-    //    也可预防 Windows 盘符攻击（如 `C:\foo`）。
-    if file.contains('\\') {
-        return Err(BuildError::InvalidStructure(format!(
-            "node '{title}' 'file' reference contains a backslash: '{file}' — use forward slashes"
-        )));
-    }
+/// Maximum total number of nodes in `struct.json` (M-3 DoS guard).
+/// `struct.json` 节点总数上限（M-3 DoS 防护）。
+const MAX_STRUCT_NODES: usize = 100_000;
 
-    // 3. Reject absolute paths: leading '/' or leading '<letter>:'.
-    // 3. 拒绝绝对路径：以 '/' 开头或以 '<letter>:' 开头。
-    if file.starts_with('/') {
-        return Err(BuildError::InvalidStructure(format!(
-            "node '{title}' 'file' reference is absolute: '{file}'"
-        )));
-    }
-    // Windows-style drive absolute: first char ASCII alpha, second char ':'.
-    // Windows 盘符绝对路径：首字符为 ASCII 字母，第二字符为 ':'。
-    let bytes = file.as_bytes();
-    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        return Err(BuildError::InvalidStructure(format!(
-            "node '{title}' 'file' reference is an absolute Windows path: '{file}'"
-        )));
-    }
+/// Maximum nesting depth of `struct.json` (M-3 DoS guard).
+/// `struct.json` 嵌套深度上限（M-3 DoS 防护）。
+const MAX_STRUCT_DEPTH: usize = 64;
 
-    // 4. No `..` components. Splitting on `/` catches segments exactly.
-    // 4. 禁止 `..` 路径段。按 `/` 分割精确匹配段名。
-    for segment in file.split('/') {
-        if segment == ".." {
+/// Enforce node-count and nesting-depth limits on a parsed struct.json tree.
+///
+/// Uses an iterative depth-first traversal with an explicit stack (rather than
+/// native recursion) so that counting a maliciously deep tree cannot itself
+/// overflow the stack. Bounds both the total number of nodes (breadth) and the
+/// maximum nesting depth.
+///
+/// 对已解析的 struct.json 树强制节点数与嵌套深度上限。
+/// 使用带显式栈的迭代式深度优先遍历（而非原生递归），使统计恶意超深树时
+/// 自身不会栈溢出。同时限制节点总数（宽度）与最大嵌套深度。
+fn enforce_structure_limits(nodes: &[ucx_types::StructureNode]) -> Result<(), BuildError> {
+    // Stack of (node, depth). Depth is 1-based for top-level nodes.
+    // (节点, 深度) 栈。顶层节点深度从 1 起。
+    let mut stack: Vec<(&ucx_types::StructureNode, usize)> =
+        nodes.iter().map(|n| (n, 1usize)).collect();
+    let mut count = 0usize;
+
+    while let Some((node, depth)) = stack.pop() {
+        count += 1;
+        if count > MAX_STRUCT_NODES {
             return Err(BuildError::InvalidStructure(format!(
-                "node '{title}' 'file' reference contains '..' segment: '{file}'"
+                "struct.json exceeds the maximum of {MAX_STRUCT_NODES} nodes / \
+                 struct.json 节点数超过上限 {MAX_STRUCT_NODES}"
             )));
         }
-    }
-
-    // 5. Reject Windows reserved device names per segment.
-    //    The OS refuses to create files whose *basename* (with or without
-    //    extension) matches a reserved name like CON, NUL, COM1, etc. This
-    //    check runs on every segment to also catch directories named similarly.
-    // 5. 每个路径段都拒绝 Windows 保留设备名。
-    //    OS 拒绝创建基名（带/不带扩展名）等于 CON、NUL、COM1 等保留名的文件。
-    //    对每个段都检查，顺带拒绝同名目录。
-    for segment in file.split('/') {
-        if is_windows_reserved_name(segment) {
+        if depth > MAX_STRUCT_DEPTH {
             return Err(BuildError::InvalidStructure(format!(
-                "node '{title}' 'file' reference uses Windows reserved name: '{file}'"
+                "struct.json nesting exceeds the maximum depth of {MAX_STRUCT_DEPTH} / \
+                 struct.json 嵌套深度超过上限 {MAX_STRUCT_DEPTH}"
             )));
+        }
+        if let Some(ref children) = node.children {
+            for child in children {
+                stack.push((child, depth + 1));
+            }
         }
     }
 
     Ok(())
 }
 
-/// Check whether a path segment corresponds to a Windows reserved device name.
+/// Validate that a `file` reference in `struct.json` is a safe relative path.
 ///
-/// The reserved names are: CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9.
-/// The check is case-insensitive and applied to the segment both as-is and
-/// with any trailing extension removed (`NUL.txt` is also reserved).
+/// This is a thin producer-side wrapper over the shared validator
+/// [`ucx_types::path_safety::validate_safe_relative_path`], which is the single
+/// source of truth shared with the consumer side (`ucx-parse::extract_to`).
+/// Rejecting the problem here stops an unsafe archive from being *produced*; the
+/// same shared validator stops an unsafe archive from being *extracted*.
 ///
-/// 判断路径段是否为 Windows 保留设备名。
-/// 保留名：CON、PRN、AUX、NUL、COM1..COM9、LPT1..LPT9。
-/// 检查不区分大小写，同时对原段和去扩展名后的段进行匹配
-/// （`NUL.txt` 也视为保留）。
-fn is_windows_reserved_name(segment: &str) -> bool {
-    // Strip the extension (everything from the first '.') for comparison.
-    // 去除扩展名（从第一个 '.' 开始）用于比较。
-    let stem = segment.split('.').next().unwrap_or(segment);
-    let upper = stem.to_ascii_uppercase();
-    matches!(
-        upper.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
-    )
+/// 校验 `struct.json` 中的 `file` 引用是否为安全的相对路径。
+/// 本函数是共享校验器 [`ucx_types::path_safety::validate_safe_relative_path`]
+/// 的生产侧薄封装——该校验器是与消费侧（`ucx-parse::extract_to`）共享的唯一
+/// 真实来源。在此拒绝可阻止不安全归档被**生产**；同一共享校验器在解包时阻止
+/// 不安全归档被**提取**。
+fn validate_structure_file_path(title: &str, file: &str) -> Result<(), BuildError> {
+    // Delegate to the single shared validator in `ucx-types` so the producer
+    // (here) and the consumer (`ucx-parse::extract_to`) enforce *identical*
+    // rules and can never drift apart. The shared validator rejects empty
+    // strings, backslashes, absolute paths (incl. Windows drive `C:`), `..`
+    // segments, Windows reserved names, NUL/control characters, and trailing
+    // dot/space segments. Its `Display` keeps the keywords ("backslash",
+    // "absolute", "..", "reserved") that the build-side tests assert on.
+    //
+    // 委托给 `ucx-types` 中唯一的共享校验器，使生产侧（此处）与消费侧
+    // （`ucx-parse::extract_to`）强制**完全一致**的规则、杜绝漂移。共享校验器
+    // 拒绝：空串、反斜杠、绝对路径（含 Windows 盘符 `C:`）、`..` 段、
+    // Windows 保留名、NUL/控制字符、以及尾随点/空格的段。其 `Display` 保留了
+    // 构建侧测试所断言的关键词（"backslash"、"absolute"、".."、"reserved"）。
+    ucx_types::path_safety::validate_safe_relative_path(file).map_err(|e| {
+        BuildError::InvalidStructure(format!(
+            "node '{title}' has an unsafe 'file' reference: {e}"
+        ))
+    })
 }
 
 /// Validate that all file references in struct.json exist in the content directory.
@@ -1693,5 +1700,77 @@ language = "zh-CN"
         make_project_with_file_ref(&project_dir, "");
         let err = build(&project_dir, &BuildOptions::default()).unwrap_err();
         assert!(matches!(err, BuildError::InvalidStructure(_)));
+    }
+
+    /// Helper: build a `StructureNode` with only the relevant fields set.
+    /// 辅助函数：构造仅设置相关字段的 `StructureNode`。
+    fn mk_node(
+        title: &str,
+        file: Option<String>,
+        children: Option<Vec<ucx_types::StructureNode>>,
+    ) -> ucx_types::StructureNode {
+        ucx_types::StructureNode {
+            title: title.to_string(),
+            file,
+            children,
+            node_type: None,
+            id: None,
+            name: None,
+            style: None,
+            encryption: None,
+        }
+    }
+
+    /// Security regression (M-3): a struct.json tree exceeding the node-count cap
+    /// is rejected, preventing a parse-amplification DoS.
+    ///
+    /// 安全回归（M-3）：超过节点数上限的 struct.json 树被拒绝，防止解析放大 DoS。
+    #[test]
+    fn test_enforce_structure_limits_rejects_too_many_nodes() {
+        let many: Vec<ucx_types::StructureNode> = (0..(MAX_STRUCT_NODES + 1))
+            .map(|i| mk_node(&format!("n{i}"), Some(format!("c{i}.md")), None))
+            .collect();
+        let err = enforce_structure_limits(&many).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("nodes")),
+            "expected node-count rejection, got: {err:?}"
+        );
+    }
+
+    /// Security regression (M-3): a struct.json tree exceeding the depth cap is
+    /// rejected (without the counter itself overflowing the stack).
+    ///
+    /// 安全回归（M-3）：超过深度上限的 struct.json 树被拒绝（且计数器自身不栈溢出）。
+    #[test]
+    fn test_enforce_structure_limits_rejects_too_deep() {
+        // Build a chain MAX_STRUCT_DEPTH + 5 levels deep.
+        // 构造比上限深 5 层的链。
+        let mut node = mk_node("leaf", Some("c.md".to_string()), None);
+        for i in 0..(MAX_STRUCT_DEPTH + 5) {
+            node = mk_node(&format!("level{i}"), None, Some(vec![node]));
+        }
+        let err = enforce_structure_limits(&[node]).unwrap_err();
+        assert!(
+            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("depth")),
+            "expected depth rejection, got: {err:?}"
+        );
+    }
+
+    /// A normal small structure passes the limits.
+    /// 正常的小型结构应通过上限检查。
+    #[test]
+    fn test_enforce_structure_limits_accepts_normal() {
+        let nodes = vec![
+            mk_node(
+                "Volume 1",
+                None,
+                Some(vec![
+                    mk_node("Ch 1", Some("ch1.md".to_string()), None),
+                    mk_node("Ch 2", Some("ch2.md".to_string()), None),
+                ]),
+            ),
+            mk_node("Epilogue", Some("epilogue.md".to_string()), None),
+        ];
+        assert!(enforce_structure_limits(&nodes).is_ok());
     }
 }

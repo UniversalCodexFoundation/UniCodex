@@ -16,10 +16,12 @@
 //! - [`manifest`] — MANIFEST.MF types / 资源清单类型
 //! - [`project`] — Project configuration types (unicodex.toml) / 项目配置类型
 //! - [`ucx_id`] — UCX unique identifier / UCX 唯一标识
+//! - [`path_safety`] — Shared safe-relative-path validation / 共享安全相对路径校验
 
 // --- Sub-modules / 子模块 ---
 pub mod codex;
 pub mod manifest;
+pub mod path_safety;
 pub mod project;
 pub mod structure;
 pub mod ucx_id;

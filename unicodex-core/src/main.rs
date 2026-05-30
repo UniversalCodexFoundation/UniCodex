@@ -775,8 +775,8 @@ fn main() -> anyhow::Result<()> {
                         println!();
                         println!("Signers:");
                         for (i, signer) in report.signers.iter().enumerate() {
-                            println!("  [{}] {}", i + 1, signer.signer_id);
-                            println!("      Subject: CN={}", signer.subject_cn);
+                            println!("  [{}] {}", i + 1, sanitize_for_display(&signer.signer_id));
+                            println!("      Subject: CN={}", sanitize_for_display(&signer.subject_cn));
                             println!("      Type: {}", signer.cert_type);
                             println!("      Fingerprint: {}", signer.fingerprint_blake3);
                             let l1_icon = if signer.layer1_valid { "OK" } else { "FAIL" };
@@ -954,10 +954,14 @@ fn main() -> anyhow::Result<()> {
                 let algorithm = ucx_sign::cert::cert_algorithm(&cert_der)
                     .unwrap_or_else(|_| "<unknown>".to_string());
 
+                // Sanitize the CN read from the (possibly foreign) certificate so
+                // embedded control characters cannot forge field lines below.
+                // 净化从（可能为外部）证书中读取的 CN，使内嵌控制字符无法伪造下方字段行。
+                let cn_display = sanitize_for_display(&cn);
                 println!("=== Certificate Info ===");
                 println!("File: {}", file.display());
-                println!("Subject: CN={cn}");
-                println!("Issuer: CN={cn}");
+                println!("Subject: CN={cn_display}");
+                println!("Issuer: CN={cn_display}");
                 println!("Type: self-signed");
                 println!("Algorithm: {algorithm}");
                 println!("Valid: {not_before} to {not_after}");
@@ -1087,6 +1091,37 @@ fn main() -> anyhow::Result<()> {
 /// 文件存在且前 4 字节等于魔数返回 `Ok(true)`；文件不足 4 字节或不等则
 /// 返回 `Ok(false)`；其他 I/O 错误原样向上传递。
 /// `ucx verify` 调用此函数在用户传入 UCXE 裸文件时快速给出友好提示。
+/// Sanitize an untrusted string for safe SINGLE-LINE display in trust-sensitive
+/// output (certificate Common Name, signer subject). Any control character —
+/// most importantly CR/LF — is rendered as a visible escape (`\n`, `\u{0}`, ...)
+/// instead of being emitted raw, so a maliciously crafted certificate field can
+/// never break out of its line to forge convincing fields (e.g. a fake
+/// `Issuer: CN=Trusted`) in `cert info` or `verify --show-signers`.
+///
+/// Certificates produced by `ucx cert create` already reject control characters
+/// at creation time (see `ucx_sign::cert`); this is defense-in-depth for
+/// certificates that arrive from any other source.
+///
+/// 对不可信字符串做**单行**安全显示净化，用于信任敏感输出（证书 Common Name、
+/// 签名者主体）。任何控制字符——尤其是 CR/LF——都渲染为可见转义（`\n`、`\u{0}` ...）
+/// 而非原样输出，使恶意构造的证书字段绝不能逃逸其所在行去伪造貌似可信的字段
+/// （如在 `cert info` 或 `verify --show-signers` 中伪造 `Issuer: CN=Trusted`）。
+/// 由 `ucx cert create` 生成的证书已在创建时拒绝控制字符（见 `ucx_sign::cert`）；
+/// 此处是针对来自其他来源证书的纵深防御。
+fn sanitize_for_display(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            // `escape_default` renders control chars visibly (\n, \t, \u{0}, ...).
+            // `escape_default` 将控制字符可见地渲染（\n、\t、\u{0} ...）。
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn is_ucxe_encrypted_file(path: &std::path::Path) -> anyhow::Result<bool> {
     use std::io::Read as _;
 

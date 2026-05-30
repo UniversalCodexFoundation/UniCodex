@@ -351,6 +351,22 @@ pub fn decrypt_chunked(
         ));
     }
 
+    // Defense in depth: a chunked ciphertext must contain at least one chunk.
+    // Iterating zero chunks would return empty plaintext without authenticating
+    // anything (a forgeable decrypt-success under any key). `deserialize_chunks`
+    // already rejects this on the wire-format path; guard here too so the
+    // invariant also holds when `decrypt_chunked` is called with a manually
+    // constructed `ChunkedCiphertext`.
+    // 纵深防御：分块密文必须含至少一个分块。迭代零分块会返回空明文却未认证任何
+    // 内容（在任意密钥下可伪造的解密成功）。`deserialize_chunks` 已在 wire-format
+    // 路径上拒绝；此处再次防护，使该不变量在以手工构造的 `ChunkedCiphertext`
+    // 调用 `decrypt_chunked` 时同样成立。
+    if chunked.chunks.is_empty() {
+        return Err(CryptoError::InvalidFormat(
+            "chunked ciphertext must contain at least one chunk / 分块密文至少需含一个分块".into(),
+        ));
+    }
+
     let mut plaintext = Vec::new();
 
     for (index, chunk) in chunked.chunks.iter().enumerate() {
@@ -455,6 +471,23 @@ pub fn deserialize_chunks(
     }
 
     let chunk_count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    // Reject a zero-chunk stream. A legitimately-encrypted chunked ciphertext
+    // ALWAYS has at least one chunk (chunked mode is only used for plaintext
+    // larger than `CHUNKED_THRESHOLD`). A `chunk_count == 0` stream would make
+    // `decrypt_chunked` iterate over zero chunks and return empty plaintext
+    // WITHOUT ever invoking the per-chunk AEAD — i.e. it would be accepted under
+    // ANY key with no authentication, a forgeable "decryption success". Reject
+    // it here so an unauthenticated file can never be reported as decrypted.
+    // 拒绝零分块流。合法加密的分块密文**恒**含至少一个分块（分块模式仅用于
+    // 大于 `CHUNKED_THRESHOLD` 的明文）。`chunk_count == 0` 的流会让
+    // `decrypt_chunked` 迭代零个分块、返回空明文而**从不**调用逐块 AEAD——即
+    // 在任意密钥下都被无认证地接受，构成可伪造的"解密成功"。在此拒绝，使未认证
+    // 文件绝不会被报告为已解密。
+    if chunk_count == 0 {
+        return Err(CryptoError::InvalidFormat(
+            "chunked ciphertext must contain at least one chunk / 分块密文至少需含一个分块".into(),
+        ));
+    }
     // Hard upper bound: chunk_count cannot exceed what the remaining bytes
     // could possibly represent (each chunk ≥ 4B size prefix + 16B tag = 20B).
     // This guards against Vec::with_capacity OOM when `chunk_count` is a
@@ -719,5 +752,48 @@ mod tests {
         let decrypted =
             decrypt_chunked(&key, &nonce, &deserialized, Algorithm::Aes256Gcm, b"").unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    /// Security regression (H-1): a zero-chunk stream (`chunk_count == 0`) must be
+    /// REJECTED by `deserialize_chunks` for both AEAD algorithms, so that a
+    /// hand-crafted unauthenticated file can never be reported as a successful
+    /// decryption under an arbitrary key.
+    ///
+    /// 安全回归（H-1）：零分块流（`chunk_count == 0`）必须被 `deserialize_chunks`
+    /// 对两种 AEAD 算法**拒绝**，使手工构造的未认证文件绝不会在任意密钥下被报告
+    /// 为解密成功。
+    #[test]
+    fn test_deserialize_rejects_zero_chunks() {
+        // A serialized stream whose only content is `chunk_count = 0` (u32 LE).
+        // 序列化流，唯一内容是 `chunk_count = 0`（u32 小端序）。
+        let zero_stream = 0u32.to_le_bytes();
+        for algo in [Algorithm::Aes256Gcm, Algorithm::ChaCha20Poly1305] {
+            let result = deserialize_chunks(&zero_stream, algo);
+            assert!(
+                matches!(result, Err(CryptoError::InvalidFormat(_))),
+                "zero-chunk stream must be rejected for {algo:?}, got: {result:?}"
+            );
+        }
+    }
+
+    /// Security regression (H-1, defense in depth): `decrypt_chunked` called with
+    /// an empty `ChunkedCiphertext` must error instead of returning empty
+    /// plaintext (which would never authenticate anything).
+    ///
+    /// 安全回归（H-1，纵深防御）：以空 `ChunkedCiphertext` 调用 `decrypt_chunked`
+    /// 必须报错，而非返回空明文（那样将从不认证任何内容）。
+    #[test]
+    fn test_decrypt_rejects_empty_chunks() {
+        let key = [0x42u8; 32];
+        let nonce = [0xABu8; 12];
+        let empty = ChunkedCiphertext {
+            chunk_count: 0,
+            chunks: Vec::new(),
+        };
+        let result = decrypt_chunked(&key, &nonce, &empty, Algorithm::Aes256Gcm, b"");
+        assert!(
+            matches!(result, Err(CryptoError::InvalidFormat(_))),
+            "empty ChunkedCiphertext must be rejected, got: {result:?}"
+        );
     }
 }

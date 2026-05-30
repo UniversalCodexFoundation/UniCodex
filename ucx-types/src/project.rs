@@ -27,6 +27,14 @@ use crate::ucx_id::UcxId;
 /// 这是开发时的配置。构建时，`ucx-build` 将其转换为
 /// `codex.json`、`struct.json` 等 UCX 文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys/sections so a misspelled field (e.g. `verson` instead of
+// `version`) or a stray `[unknown_section]` in `unicodex.toml` is reported as an
+// error rather than silently ignored — upholding the "verifiable / explainable"
+// principle. Safe here because no field uses `#[serde(flatten)]`.
+// 拒绝未知键/段，使 `unicodex.toml` 中拼错的字段（如 `verson` 误写 `version`）或
+// 多余的 `[unknown_section]` 被报错而非静默忽略——践行"可验证/可解释"原则。
+// 此处安全，因为没有字段使用 `#[serde(flatten)]`。
+#[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     /// Project-level settings.
     /// 项目级设置。
@@ -110,6 +118,8 @@ pub struct ProjectConfig {
 ///
 /// `unicodex.toml` 的 `[project]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys so typos in `[project]` surface as errors. / 拒绝未知键，使 `[project]` 中的拼写错误报错。
+#[serde(deny_unknown_fields)]
 pub struct ProjectSection {
     /// UCX specification version (e.g., "1.0").
     /// UCX 规范版本（如 "1.0"）。
@@ -246,6 +256,8 @@ pub fn validate_project_version(v: &str) -> Result<(), VersionFormatError> {
 ///
 /// `unicodex.toml` 的 `[identifier]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[identifier]`. / 拒绝 `[identifier]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct IdentifierSection {
     /// UCX unique identifier.
     /// UCX 唯一标识。
@@ -261,6 +273,8 @@ pub struct IdentifierSection {
 ///
 /// `unicodex.toml` 的 `[title]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[title]`. / 拒绝 `[title]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct TitleSection {
     /// Main title.
     /// 主标题。
@@ -276,6 +290,8 @@ pub struct TitleSection {
 ///
 /// `unicodex.toml` 的 `[series]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[series]`. / 拒绝 `[series]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct SeriesSection {
     /// Series name.
     /// 系列名称。
@@ -291,6 +307,8 @@ pub struct SeriesSection {
 ///
 /// `unicodex.toml` 的 `[book]` 段 — 书籍级元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[book]`. / 拒绝 `[book]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct BookSection {
     /// Primary language (BCP 47 tag).
     /// 主要语言（BCP 47 标签）。
@@ -316,6 +334,8 @@ pub struct BookSection {
 ///
 /// `unicodex.toml` 的 `[cover]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[cover]`. / 拒绝 `[cover]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct CoverSection {
     /// Path to the cover image (relative to project root).
     /// 封面图路径（相对于项目根目录）。
@@ -326,6 +346,8 @@ pub struct CoverSection {
 ///
 /// `unicodex.toml` 的 `[build]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[build]`. / 拒绝 `[build]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct BuildSection {
     /// Output directory for built UCX files (default: "dist").
     /// 构建输出目录（默认："dist"）。
@@ -349,6 +371,8 @@ pub struct BuildSection {
 /// `unicodex.toml` 的 `[signing]` 段。
 /// 用于签名过程，不写入 UCX 文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[signing]`. / 拒绝 `[signing]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct SigningSection {
     /// Path to the private key file.
     /// 私钥文件路径。
@@ -382,6 +406,8 @@ pub struct SigningSection {
 /// semantic = "volume.chapter.patch"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Reject unknown keys in `[version]`. / 拒绝 `[version]` 中的未知键。
+#[serde(deny_unknown_fields)]
 pub struct VersionSection {
     /// Version strategy: "auto" (recommended) or "manual".
     /// 版本策略："auto"（推荐）或 "manual"。
@@ -483,6 +509,61 @@ language = "zh-CN"
         assert_eq!(config.title.main, "我的小说");
         assert_eq!(config.creators.len(), 1);
         assert_eq!(config.book.unwrap().language, "zh-CN");
+    }
+
+    /// Regression (M-2): unknown / misspelled keys and stray sections in
+    /// `unicodex.toml` must be REJECTED rather than silently ignored, so a typo
+    /// like `verson` (instead of `version`) surfaces as an error.
+    ///
+    /// 回归（M-2）：`unicodex.toml` 中未知/拼错的键与多余段必须被**拒绝**而非
+    /// 静默忽略，使 `verson`（误写 `version`）这样的拼写错误暴露为错误。
+    #[test]
+    fn test_toml_rejects_unknown_fields() {
+        // (a) misspelled top-level key inside a known section.
+        // (a) 已知段内拼错的键。
+        let typo_in_project = r#"
+[project]
+version = "1.0"
+verson = "1.0"
+
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+
+[title]
+main = "我的小说"
+
+[[creators]]
+name = "作者"
+role = "author"
+"#;
+        assert!(
+            toml::from_str::<ProjectConfig>(typo_in_project).is_err(),
+            "misspelled key 'verson' in [project] must be rejected"
+        );
+
+        // (b) an entirely unknown top-level section.
+        // (b) 完全未知的顶层段。
+        let unknown_section = r#"
+[project]
+version = "1.0"
+
+[identifier]
+ucx_id = "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+
+[title]
+main = "我的小说"
+
+[[creators]]
+name = "作者"
+role = "author"
+
+[unknown_section]
+foo = "bar"
+"#;
+        assert!(
+            toml::from_str::<ProjectConfig>(unknown_section).is_err(),
+            "stray [unknown_section] must be rejected"
+        );
     }
 
     #[test]

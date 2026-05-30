@@ -447,6 +447,86 @@ fn test_extract_to() {
     assert_eq!(codex.title.main, "测试小说");
 }
 
+/// Create a valid UCX archive plus one extra STORED entry whose NAME is the
+/// attacker-controlled `evil_entry_name` (used for Zip-Slip regression tests).
+///
+/// 创建一个有效 UCX 归档，并额外加入一个 STORED 条目，其名称为攻击者可控的
+/// `evil_entry_name`（用于 Zip-Slip 回归测试）。
+fn create_test_ucx_with_extra_entry(path: &Path, evil_entry_name: &str) {
+    let codex_json = test_codex_json();
+    let struct_json = test_struct_json();
+    let chapter_md = test_chapter_content();
+
+    let manifest_files: Vec<(&str, &[u8])> = vec![
+        ("metadata/codex.json", codex_json.as_bytes()),
+        ("content/struct.json", struct_json.as_bytes()),
+        ("content/chapter-001.md", chapter_md.as_bytes()),
+    ];
+    let manifest_mf = build_manifest_mf(&manifest_files);
+
+    let file = std::fs::File::create(path).expect("failed to create test ZIP file");
+    let mut zip = zip::ZipWriter::new(file);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    zip.start_file("mimetype", stored_opts).unwrap();
+    zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.write_all(manifest_mf.as_bytes()).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.write_all(codex_json.as_bytes()).unwrap();
+    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.write_all(struct_json.as_bytes()).unwrap();
+    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.write_all(chapter_md.as_bytes()).unwrap();
+
+    // The malicious entry. `start_file` preserves the raw name verbatim, which is
+    // exactly what a hand-crafted attacker archive would carry.
+    // 恶意条目。`start_file` 原样保留名称，正是攻击者手工归档所携带的形式。
+    zip.start_file(evil_entry_name, stored_opts).unwrap();
+    zip.write_all(b"PWNED-BY-AUDIT").unwrap();
+
+    zip.finish().unwrap();
+}
+
+/// Test (security regression for C-1 Zip-Slip): `extract_to` must REJECT an
+/// archive containing a drive-absolute / backslash-absolute / `..` entry name
+/// instead of writing outside `output_dir`. Before the fix, a Windows
+/// drive-absolute entry name (`C:/...`) escaped the output directory because
+/// the guard only checked `..` and a leading `/`.
+///
+/// 测试（C-1 Zip-Slip 安全回归）：`extract_to` 必须**拒绝**含盘符绝对 /
+/// 反斜杠绝对 / `..` 条目名的归档，而非写出到 `output_dir` 之外。修复前，
+/// Windows 盘符绝对条目名（`C:/...`）会逃逸输出目录，因为旧守卫只查 `..` 与
+/// 以 `/` 开头。
+#[test]
+fn test_extract_to_rejects_zip_slip_entries() {
+    let evil_names = [
+        "C:/Windows/Temp/ucx_audit_canary.txt", // Windows drive-absolute
+        "sub\\escape.txt",                       // backslash
+        "../../escape.txt",                      // parent traversal
+        "/etc/escape.txt",                       // POSIX absolute
+        "content/NUL",                           // Windows reserved name
+    ];
+
+    for name in evil_names {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ucx_path = tmp.path().join("evil.ucx");
+        create_test_ucx_with_extra_entry(&ucx_path, name);
+
+        let output_dir = tmp.path().join("out");
+        let mut archive = open(&ucx_path).expect("open() should accept the otherwise-valid archive");
+        let result = archive.extract_to(&output_dir);
+
+        assert!(
+            matches!(result, Err(ParseError::PathTraversal(_))),
+            "extract_to must reject unsafe entry {name:?}, got: {result:?}"
+        );
+    }
+}
+
 // =============================================================================
 // Encryption detection tests / 加密检测测试
 // =============================================================================
