@@ -102,7 +102,23 @@ git tag 仅 3 个，且均打于 2026-02-16：`v0.0.0-alpha.1` / `v0.1.0-alpha.1
 
 ---
 
+## 2026-05-31 — Phase 5 启动：多语言 SDK（14 种语言）
+
+生态建设第一步：为 UCX 标准建立多语言**只读阅读器 SDK**（解析 + BLAKE3 完整性 + Ed25519 双层签名验证 + UCXE 解密），位于 `sdk/`。
+
+- **14 种语言**：Rust、Go、Python、TypeScript、Java、C#、Kotlin、C++、Ruby、PHP、Swift、Dart、**ArkTS**(HarmonyOS)、**Cangjie**(仓颉)。全部达 Level 3（parse+verify+decrypt，3 算法 + 2 KDF）。
+- **统一契约**：`sdk/UCX-FORMAT.md`（字节级 wire-format，源码核验，含 7 处 doc-vs-code 纠错）+ `sdk/SDK-API.md`（统一 API/数据模型/错误/常量/命名映射/能力分级）+ `sdk/testdata/`（共享夹具 + `expected.json`，一致性测试 T1–T10）。
+- **验证**：8 种本机工具链构建并跑 T1–T10 全过（Rust/Go/Python/TS/Java/C#/Kotlin/C++）；6 种无工具链者经逐位外部核验（Ruby/PHP/Swift/Dart/ArkTS/Cangjie），fingerprint `c7eda2f7…` 精确匹配、三种解密往返、篡改拒绝。ArkTS、Cangjie 实现中各发现并修复 2 个 Argon2id bug。
+- **TypeScript→JS**：tsup 双产物（ESM + CommonJS，ESM-only 依赖内联），`import`/`require` 均可用且带 `.d.ts` 类型声明，无需单独 JS 版。
+- **版本号方案**（ADR-012）：SDK 版本 `X.Y.Z`，`X.Y`=所支持 UCX 标准、`Z`=补丁；全部初始 **0.4.0**。
+- **仓库结构**：每个 `sdk/<lang>/` 为独立 git 子仓库（可单独开源），父仓库 `.gitignore` 忽略 `/sdk/*/`，仅保留 `sdk/README.md` 索引 + 规范 + 夹具。
+
+> 已知缺口：6 种无工具链 SDK 待真机构建回归；Cangjie 的分块(>64MiB)解密与证书有效期窗口校验未实现（见其 README）。详见 [../TODO.md](../TODO.md)。
+
+---
+
 ## 当前状态 / 下一步
 
-- 当前版本 **v0.4.0-alpha.2**（HEAD `05dd1f0`）：Phase 0–4 全部完成，无任何 placeholder crate；回归 26/28 FIXED，已具备进入 beta 的条件。
-- 已知收尾外的待办（tag 缺口补打、Phase 5 生态建设等）统一记录于 [../TODO.md](../TODO.md)；阶段与里程碑见 [../plan/roadmap.md](../plan/roadmap.md)。
+- UCX 标准/工具链：**v0.4.0-alpha.2**，Phase 0–4 完成；git tag 已回补完整（`v0.0.0-alpha.1` → `v0.4.0-alpha.2`）。
+- 生态：Phase 5 多语言 SDK 首批 **14 种**已就绪（均 `v0.4.0`，对应 UCX 标准 0.4.x）。
+- 待办（beta.1 必修、SDK 真机工具链构建验证、官方服务等）见 [../TODO.md](../TODO.md)；阶段与里程碑见 [../plan/roadmap.md](../plan/roadmap.md)。

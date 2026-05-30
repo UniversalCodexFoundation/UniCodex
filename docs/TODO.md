@@ -64,9 +64,12 @@
 
 ## 六、Phase 5 生态建设（目标 v1.0.0）
 
-> 详见 [plan/roadmap.md](plan/roadmap.md)。
+> 详见 [plan/roadmap.md](plan/roadmap.md) 与 [../sdk/README.md](../sdk/README.md)。
 
-- **多语言 SDK**：SDK-001 go-ucx、SDK-002 py-ucx、SDK-003 js-ucx。
+- **多语言 SDK**：✅ 首批 **14 种**只读阅读器 SDK 已就绪（均 v0.4.0，对应 UCX 标准 0.4.x）：Rust/Go/Python/TypeScript/Java/C#/Kotlin/C++/Ruby/PHP/Swift/Dart/ArkTS/Cangjie。原 SDK-001~003（go/py/js）已并入（无单独 js 版——TypeScript SDK 双产物 ESM/CJS 即 JS 可用）。
+  - 待办：6 种无本机工具链的 SDK（Ruby/PHP/Swift/Dart/ArkTS/Cangjie）需在装有对应工具链的环境做真机构建 + T1–T10 回归。
+  - 待办：Cangjie 补实现 分块(>64 MiB) UCXE 解密 + 证书有效期窗口校验（见其 README）。
+  - 增强（远期）：各 SDK 可加写入/签名/加密能力（当前仅只读）。
 - **官方服务**：SVC-001 密钥分发、SVC-002 身份验证 / CA、SVC-003 包验证、SVC-004 阅读器集成 API。
 
 ---

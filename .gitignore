@@ -25,3 +25,8 @@ Desktop.ini
 # 测试临时目录（黑盒回归测试的可再生 scratch：二进制、测试密钥、样本数据等）
 # 正式测试报告已归档至 docs/test/problems/，此目录无需纳入版本控制
 temp_test/
+
+# 多语言 SDK：每个 sdk/<lang>/ 是独立子仓库（单独开源），父仓库不跟踪其内容，
+# 仅保留索引(sdk/README.md)、wire-format 规范(sdk/UCX-FORMAT.md)与共享夹具(sdk/testdata/)。
+/sdk/*/
+!/sdk/testdata/

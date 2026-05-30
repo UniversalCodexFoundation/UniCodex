@@ -24,7 +24,7 @@
 | Phase 2 | 完善与版本管理（Polish & Versioning） | ✅ 已完成 | v0.2.0-alpha.1 |
 | Phase 3 | 签名与验证（Signature & Verification） | ✅ 已完成 | v0.3.0-alpha.1 |
 | Phase 4 | 加密体系（Encryption） | ✅ 已完成 | v0.4.0-alpha.1 → alpha.2 |
-| Phase 5 | 生态建设（Ecosystem） | 📋 规划中 | — |
+| Phase 5 | 生态建设（Ecosystem） | 🚧 进行中 | SDK v0.4.0 |
 | 区块链 | 区块链溯源（Blockchain Traceability） | 远期 | — |
 
 > 各阶段“做了什么 / 何时做的”见 [../memory/progress.md]；模块当前 API 与状态见 [../memory/modules.md]。
@@ -34,7 +34,7 @@
 
 ```
 Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5
-  ✅          ✅          ✅          ✅          ✅          📋
+  ✅          ✅          ✅          ✅          ✅          🚧
                                                    ┆
                                           （远期）区块链溯源
 ```
@@ -55,7 +55,7 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 
 | Phase 2 | **已完成** | v0.2.0-alpha.1 | 版本管理 + CLI 增强 |
 | Phase 3 | **已完成** | v0.3.0-alpha.1 | 双层签名 + 证书管理 + 完整验证 |
 | Phase 4 | **已完成** | v0.4.0-alpha.1 → **alpha.2（安全加固轮，回归 26/28 FIXED）** | ucx-crypto 加密模块 + CLI 命令 + 构建/解析集成 |
-| Phase 5 | 规划中 | — | 规范 08/09 已就绪 |
+| Phase 5 | **进行中** | SDK v0.4.0 | 多语言 SDK 首批 14 种已就绪（见 [../../sdk/README.md](../../sdk/README.md)）；官方服务待启动 |
 | 区块链 | 远期计划 | — | 规范 06-blockchain-ext.md 已就绪 |
 
 > 测试总数、回归明细、各 crate 状态见 [../memory/progress.md] 与 [../memory/modules.md]。

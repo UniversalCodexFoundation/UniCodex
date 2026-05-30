@@ -28,7 +28,7 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 | 顶层 CLI 子命令 | **12 个** | `unicodex-core/src/main.rs` `enum Commands` |
 | 编译状态 | `cargo build` 通过，无 error/warning | 2026-04-18 实测 |
 
-**Phase 进度**：Phase 0–4 **全部已完成**，Phase 5（生态建设）规划中。
+**Phase 进度**：Phase 0–4 **全部已完成**；Phase 5（生态建设）**进行中**——多语言只读 SDK 首批 **14 种**已就绪（见 [../sdk/README.md](../sdk/README.md)，均 v0.4.0）。
 **⚠️ 无任何 placeholder crate**——Phase 2/3/4 的 ucx-version/sign/verify/crypto 均为生产实现。
 
 ---
@@ -41,13 +41,14 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 | `docs/memory/` | 长期大量记忆（CLAUDE.md 指定） | 详细历史 |
 | `docs/memory/progress.md` | 逐版本开发编年史 | 进度史 |
 | `docs/TODO.md` | 待办与遗留问题（CLAUDE.md 指定） | 待办 |
-| `docs/memory/decisions.md` | 架构决策记录（ADR-001 ~ ADR-010） | 决策史 |
+| `docs/memory/decisions.md` | 架构决策记录（ADR-001 ~ ADR-012） | 决策史 |
 | `docs/memory/modules.md` | 各 crate 设计/API/实现状态 | 模块笔记 |
 | `docs/plan/roadmap.md` | 长期路线图 + 阶段总览 | 计划 |
 | `docs/plan/phase-1-detailed.md` | Phase 1 详细计划（Phase 2-4 无独立详细计划文档） | 计划 |
 | `docs/00-overview.md` ~ `09-official-services.md` | 10 份 UCX 规范文档 | 规范 |
 | `docs/quickstart.md` / `docs/workflow.md` | 用户向上手/工作流文档 | 用户文档 |
 | `docs/test/problems/X.Y.Z.md` | **每版本一份**回归测试报告（共 6 份） | 测试史 |
+| `sdk/README.md` + `sdk/{UCX-FORMAT,SDK-API}.md` + `sdk/testdata/` | 多语言 SDK 索引 + wire-format/API 契约 + 夹具（Phase 5；各 `sdk/<lang>/` 为独立子仓库） | SDK |
 
 > **结构说明**：已对齐 CLAUDE.md 规范——`docs/MEMORY.md`（实时关键记忆）+ `docs/memory/`（长期记忆）
 > + `docs/TODO.md`（待办）+ `docs/plan/`（计划）。旧 `docs/development/` 已于本次整理迁移内容后删除。
@@ -79,12 +80,13 @@ unicodex/
    `v1.0.0` 仅作为"全功能完成"的终点里程碑 M6。详见 [memory/decisions.md](memory/decisions.md) ADR-011。
 2. **git tag**：已回补完整（`v0.0.0-alpha.1` → `v0.4.0-alpha.2`，共 7 个 annotated）。
    今后**每次版本发布必须打 tag**（CLAUDE.md "关键节点设置 tag"），且 tag 与 `Cargo.toml` 版本一致。
-2. **`temp_test/` 是未跟踪的测试 scratch**（145M：`ucx.exe` + 922 文件 + 50 个测试私钥），
+3. **`temp_test/` 是未跟踪的测试 scratch**（145M：`ucx.exe` + 922 文件 + 50 个测试私钥），
    已加入 `.gitignore`。正式测试报告在 `docs/test/problems/`，**勿把 temp_test 当正式产物**。
-3. **加密在签名之前**（Encrypt-then-Sign，ADR-004）：签名保护密文，无需解密即可验签。
-4. **错误文案防 oracle**：解密失败统一返回 `decryption failed`，不泄露具体原因。
-5. **路径与输入安全**：struct.json 拒绝 `../`/绝对路径/Windows 保留名/NUL（部分仍在加固，见 todo）。
-6. **commit 节奏**：每完成一部分即 commit，conventional commits（`feat/fix/docs/chore` + scope）。
+4. **加密在签名之前**（Encrypt-then-Sign，ADR-004）：签名保护密文，无需解密即可验签。
+5. **错误文案防 oracle**：解密失败统一返回 `decryption failed`，不泄露具体原因。
+6. **路径与输入安全**：struct.json 拒绝 `../`/绝对路径/Windows 保留名/NUL（部分仍在加固，见 todo）。
+7. **commit 节奏**：每完成一部分即 commit，conventional commits（`feat/fix/docs/chore` + scope）。
+8. **多语言 SDK 版本号方案**（Phase 5）：SDK 版本 `X.Y.Z` 中 `X.Y` = 所支持的 UCX 标准版本（**前两位相同 ⇒ 对外 API 相同**），`Z` = SDK 自身补丁号；旧标准线持续发补丁、不废弃（类 Python 多版本并行）。当前全部 SDK 初始版本 = **v0.4.0**（对应 UCX 标准 0.4.x）。详见 [memory/decisions.md](memory/decisions.md) ADR-012。
 
 ---
 
