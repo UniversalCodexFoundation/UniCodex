@@ -245,11 +245,7 @@ pub fn derive_argon2id(
 
     // Create Argon2id instance with version 0x13 (v19).
     // 创建 Argon2id 实例，版本 0x13（v19）。
-    let argon2 = argon2::Argon2::new(
-        argon2::Algorithm::Argon2id,
-        argon2::Version::V0x13,
-        params,
-    );
+    let argon2 = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
     // Derive the 32-byte key.
     // 派生 32 字节密钥。
@@ -385,11 +381,8 @@ pub fn derive_key(
                 .build()
                 .map_err(|e| CryptoError::KeyDerivation(format!("Argon2id params error: {e}")))?;
 
-            let argon2 = argon2::Argon2::new(
-                argon2::Algorithm::Argon2id,
-                argon2::Version::V0x13,
-                params,
-            );
+            let argon2 =
+                argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
             // Zeroizing 包装确保密钥材料在 drop 时被安全清零。
             let mut output = Zeroizing::new(vec![0u8; output_len]);
@@ -454,10 +447,22 @@ mod tests {
         let passphrase = b"test-passphrase-123";
         let salt = [0xAA; SALT_SIZE];
 
-        let key1 = derive_argon2id(passphrase, &salt, TEST_MEMORY_KIB, TEST_TIME_COST, TEST_PARALLELISM)
-            .expect("first derivation should succeed");
-        let key2 = derive_argon2id(passphrase, &salt, TEST_MEMORY_KIB, TEST_TIME_COST, TEST_PARALLELISM)
-            .expect("second derivation should succeed");
+        let key1 = derive_argon2id(
+            passphrase,
+            &salt,
+            TEST_MEMORY_KIB,
+            TEST_TIME_COST,
+            TEST_PARALLELISM,
+        )
+        .expect("first derivation should succeed");
+        let key2 = derive_argon2id(
+            passphrase,
+            &salt,
+            TEST_MEMORY_KIB,
+            TEST_TIME_COST,
+            TEST_PARALLELISM,
+        )
+        .expect("second derivation should succeed");
 
         assert_eq!(key1, key2, "same inputs must produce the same Argon2id key");
     }
@@ -483,12 +488,27 @@ mod tests {
     fn test_different_passphrase_different_key() {
         let salt = [0xCC; SALT_SIZE];
 
-        let key_a = derive_argon2id(b"password-A", &salt, TEST_MEMORY_KIB, TEST_TIME_COST, TEST_PARALLELISM)
-            .expect("derive A should succeed");
-        let key_b = derive_argon2id(b"password-B", &salt, TEST_MEMORY_KIB, TEST_TIME_COST, TEST_PARALLELISM)
-            .expect("derive B should succeed");
+        let key_a = derive_argon2id(
+            b"password-A",
+            &salt,
+            TEST_MEMORY_KIB,
+            TEST_TIME_COST,
+            TEST_PARALLELISM,
+        )
+        .expect("derive A should succeed");
+        let key_b = derive_argon2id(
+            b"password-B",
+            &salt,
+            TEST_MEMORY_KIB,
+            TEST_TIME_COST,
+            TEST_PARALLELISM,
+        )
+        .expect("derive B should succeed");
 
-        assert_ne!(key_a, key_b, "different passphrases must yield different keys");
+        assert_ne!(
+            key_a, key_b,
+            "different passphrases must yield different keys"
+        );
     }
 
     /// Different salts must produce different keys.
@@ -515,7 +535,13 @@ mod tests {
 
         // Argon2id should reject empty passphrase.
         // Argon2id 应拒绝空口令。
-        let result = derive_argon2id(b"", &salt, TEST_MEMORY_KIB, TEST_TIME_COST, TEST_PARALLELISM);
+        let result = derive_argon2id(
+            b"",
+            &salt,
+            TEST_MEMORY_KIB,
+            TEST_TIME_COST,
+            TEST_PARALLELISM,
+        );
         assert!(result.is_err(), "Argon2id must reject empty passphrase");
 
         // PBKDF2 should reject empty passphrase.
@@ -666,8 +692,14 @@ mod tests {
         let pbkdf2_params = crate::format::KdfParams::Pbkdf2 {
             iterations: TEST_PBKDF2_ITERATIONS,
         };
-        let result = derive_key(passphrase, &salt, crate::Kdf::Pbkdf2HmacSha256, &pbkdf2_params, 64)
-            .expect("PBKDF2 64-byte derive should succeed");
+        let result = derive_key(
+            passphrase,
+            &salt,
+            crate::Kdf::Pbkdf2HmacSha256,
+            &pbkdf2_params,
+            64,
+        )
+        .expect("PBKDF2 64-byte derive should succeed");
         assert_eq!(result.len(), 64, "PBKDF2 output must be 64 bytes");
     }
 }

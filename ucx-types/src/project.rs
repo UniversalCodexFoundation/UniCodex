@@ -237,10 +237,7 @@ pub fn validate_project_version(v: &str) -> Result<(), VersionFormatError> {
                     "pre-release identifier must not be empty",
                 ));
             }
-            if !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            {
+            if !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
                 return Err(VersionFormatError::Invalid(
                     v.to_string(),
                     "pre-release identifier must match [A-Za-z0-9-]+",
@@ -590,7 +587,10 @@ foo = "bar"
         let deserialized: VersionSection = toml::from_str(&toml_str).unwrap();
         assert_eq!(deserialized.strategy.as_deref(), Some("auto"));
         assert_eq!(deserialized.auto_on_build, Some(true));
-        assert_eq!(deserialized.semantic.as_deref(), Some("volume.chapter.patch"));
+        assert_eq!(
+            deserialized.semantic.as_deref(),
+            Some("volume.chapter.patch")
+        );
     }
 
     #[test]

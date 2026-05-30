@@ -40,21 +40,24 @@ ucx-crypto  = { workspace = true }
 
 # --- CLI framework / 命令行框架 ---
 clap = { workspace = true }
+# No-echo passphrase prompt (the passphrase must NOT be echoed to the terminal).
+# 无回显口令输入（口令不得回显到终端）。
+rpassword = { workspace = true }
 
 # --- Encoding / 编码 ---
 # Base64 decoding for encryption keys passed via CLI.
 # Base64 解码，用于 CLI 传入的加密密钥。
 base64 = { workspace = true }
 
+# --- Memory safety / 内存安全 ---
+# Zero passphrases and decrypted plaintext from memory after use.
+# 使用后将口令与解密明文从内存清零。
+zeroize = { workspace = true }
+
 # --- Error handling / 错误处理 ---
 # CLI uses `anyhow` for ergonomic error propagation.
 # CLI 层使用 `anyhow` 进行便捷的错误传播。
 anyhow = { workspace = true }
-
-# --- Async runtime / 异步运行时 ---
-# Required for network-related subcommands (chain verify, key fetch, etc.).
-# 网络相关子命令需要异步运行时。
-tokio = { workspace = true }
 
 # --- Logging / 日志 ---
 tracing = { workspace = true }

@@ -380,20 +380,13 @@ fn verify_layer2(file_data: &[u8]) -> (Option<Layer2Result>, Vec<Layer2SignerInf
                 Ok(ucx_sign::cert::CertValidityStatus::Valid) => (true, None),
                 Ok(ucx_sign::cert::CertValidityStatus::Expired(date)) => (
                     false,
-                    Some(format!(
-                        "certificate expired: valid until {date}"
-                    )),
+                    Some(format!("certificate expired: valid until {date}")),
                 ),
                 Ok(ucx_sign::cert::CertValidityStatus::NotYetValid(date)) => (
                     false,
-                    Some(format!(
-                        "certificate not yet valid: notBefore {date}"
-                    )),
+                    Some(format!("certificate not yet valid: notBefore {date}")),
                 ),
-                Err(e) => (
-                    false,
-                    Some(format!("cert validity check error: {e}")),
-                ),
+                Err(e) => (false, Some(format!("cert validity check error: {e}"))),
             };
 
         let entry_valid = digest_matches && sig_valid && cert_time_valid;
@@ -414,9 +407,8 @@ fn verify_layer2(file_data: &[u8]) -> (Option<Layer2Result>, Vec<Layer2SignerInf
             valid: entry_valid,
         });
 
-        let mut detail_line = format!(
-            "signer[{i}]: digest_match={digest_matches}, sig_valid={sig_valid}"
-        );
+        let mut detail_line =
+            format!("signer[{i}]: digest_match={digest_matches}, sig_valid={sig_valid}");
         if let Some(extra) = cert_time_detail {
             detail_line.push_str(&format!(", {extra}"));
         }
@@ -452,7 +444,8 @@ fn recompute_protected_digest(file_data: &[u8]) -> Result<Vec<u8>, String> {
     let eocd_offset = ucx_sign::zip_binary::find_eocd(file_data)
         .map_err(|e| format!("failed to find EOCD: {e}"))?;
     let cd_offset_in_signed = ucx_sign::zip_binary::get_cd_offset(file_data, eocd_offset)
-        .map_err(|e| format!("failed to get CD offset: {e}"))? as usize;
+        .map_err(|e| format!("failed to get CD offset: {e}"))?
+        as usize;
 
     // The signing block sits between the entries and the CD.
     // Find the signing block to determine its boundaries.
@@ -586,9 +579,7 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
     // 查找 META-INF/signatures/ 下的所有 SF 文件。
     let sf_files: Vec<String> = file_names
         .iter()
-        .filter(|name| {
-            name.starts_with("META-INF/signatures/") && name.ends_with(".SF")
-        })
+        .filter(|name| name.starts_with("META-INF/signatures/") && name.ends_with(".SF"))
         .cloned()
         .collect();
 
@@ -680,8 +671,10 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
         // Verify the manifest digest in the SF matches the actual MANIFEST.MF hash.
         // 验证 SF 中的 manifest 摘要与实际 MANIFEST.MF 哈希一致。
         let actual_manifest_hash = blake3::hash(&manifest_content);
-        let actual_manifest_b64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, actual_manifest_hash.as_bytes());
+        let actual_manifest_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            actual_manifest_hash.as_bytes(),
+        );
         let digest_matches = sf_data.manifest_digest == actual_manifest_b64;
 
         // Verify the EC signature against the SF content.
@@ -691,9 +684,7 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
             Ok(r) => (r.valid, r.cert_der),
             Err(e) => {
                 all_valid = false;
-                details_parts.push(format!(
-                    "{signer_id}: EC verification error: {e}"
-                ));
+                details_parts.push(format!("{signer_id}: EC verification error: {e}"));
                 continue;
             }
         };
@@ -703,17 +694,14 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
         // of whether the Ed25519 signature math itself is sound.
         // 检查证书的有效期窗口（notBefore / notAfter）。
         // 无论 Ed25519 签名运算本身是否正确，过期或尚未生效的证书都会使签名者无效。
-        let cert_validity_status =
-            match ucx_sign::cert::check_cert_validity(&cert_der) {
-                Ok(s) => s,
-                Err(e) => {
-                    all_valid = false;
-                    details_parts.push(format!(
-                        "{signer_id}: cert validity check error: {e}"
-                    ));
-                    continue;
-                }
-            };
+        let cert_validity_status = match ucx_sign::cert::check_cert_validity(&cert_der) {
+            Ok(s) => s,
+            Err(e) => {
+                all_valid = false;
+                details_parts.push(format!("{signer_id}: cert validity check error: {e}"));
+                continue;
+            }
+        };
         let cert_time_valid = match &cert_validity_status {
             ucx_sign::cert::CertValidityStatus::Valid => true,
             ucx_sign::cert::CertValidityStatus::Expired(date) => {
@@ -756,10 +744,8 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
                             if pem_der == cert_der {
                                 true
                             } else {
-                                let pem_fp =
-                                    ucx_sign::cert::cert_fingerprint_blake3(&pem_der);
-                                let ec_fp =
-                                    ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
+                                let pem_fp = ucx_sign::cert::cert_fingerprint_blake3(&pem_der);
+                                let ec_fp = ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
                                 details_parts.push(format!(
                                     "{signer_id}: certificate mismatch: cert.pem fingerprint={pem_fp}, EC embedded fingerprint={ec_fp}"
                                 ));
@@ -773,17 +759,14 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
                             false
                         }
                         Err(e) => {
-                            details_parts.push(format!(
-                                "{signer_id}: failed to decode cert.pem: {e}"
-                            ));
+                            details_parts
+                                .push(format!("{signer_id}: failed to decode cert.pem: {e}"));
                             false
                         }
                     }
                 }
                 Err(e) => {
-                    details_parts.push(format!(
-                        "{signer_id}: failed to read cert.pem: {e}"
-                    ));
+                    details_parts.push(format!("{signer_id}: failed to read cert.pem: {e}"));
                     false
                 }
             }
@@ -804,8 +787,8 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
 
         // Extract certificate information.
         // 提取证书信息。
-        let cert_cn = ucx_sign::cert::cert_subject_cn(&cert_der)
-            .unwrap_or_else(|_| "<unknown>".to_string());
+        let cert_cn =
+            ucx_sign::cert::cert_subject_cn(&cert_der).unwrap_or_else(|_| "<unknown>".to_string());
         let cert_fingerprint = ucx_sign::cert::cert_fingerprint_blake3(&cert_der);
 
         // Determine certificate type (self-signed vs CA-issued).
@@ -1104,10 +1087,7 @@ mod tests {
     /// 测试：decide_status — 两层都有效产出 Valid。
     #[test]
     fn test_decide_status_both_valid_is_valid() {
-        assert_eq!(
-            decide_status(true, true, true, true),
-            VerifyStatus::Valid
-        );
+        assert_eq!(decide_status(true, true, true, true), VerifyStatus::Valid);
     }
 
     /// Test: decide_status — neither layer present produces Unsigned.
@@ -1204,8 +1184,7 @@ mod tests {
 
         // Sign the UCX file.
         // 签名 UCX 文件。
-        ucx_sign::sign(ucx_path, &key_path, &cert_path, "AUTHOR")
-            .expect("sign should succeed");
+        ucx_sign::sign(ucx_path, &key_path, &cert_path, "AUTHOR").expect("sign should succeed");
 
         (key_path, cert_path)
     }
@@ -1224,8 +1203,14 @@ mod tests {
             VerifyStatus::Unsigned,
             "unsigned file must have Unsigned status"
         );
-        assert!(report.layer1.is_none(), "no Layer 1 result for unsigned file");
-        assert!(report.layer2.is_none(), "no Layer 2 result for unsigned file");
+        assert!(
+            report.layer1.is_none(),
+            "no Layer 1 result for unsigned file"
+        );
+        assert!(
+            report.layer2.is_none(),
+            "no Layer 2 result for unsigned file"
+        );
         assert!(report.signers.is_empty(), "no signers for unsigned file");
     }
 
@@ -1303,10 +1288,7 @@ mod tests {
         assert_eq!(report.signers.len(), 1, "must have exactly 1 signer");
         let signer = &report.signers[0];
 
-        assert_eq!(
-            signer.signer_id, "AUTHOR",
-            "signer_id must be AUTHOR"
-        );
+        assert_eq!(signer.signer_id, "AUTHOR", "signer_id must be AUTHOR");
         assert_eq!(
             signer.subject_cn, "Test Verify Signer",
             "subject_cn must match the certificate CN"
@@ -1349,8 +1331,7 @@ mod tests {
             "signer count must be consistent"
         );
         assert_eq!(
-            report1.signers[0].fingerprint_blake3,
-            report2.signers[0].fingerprint_blake3,
+            report1.signers[0].fingerprint_blake3, report2.signers[0].fingerprint_blake3,
             "signer fingerprint must be consistent"
         );
     }
@@ -1383,8 +1364,7 @@ mod tests {
         let mut out_buf = Vec::new();
         {
             let cursor = std::io::Cursor::new(&original);
-            let mut src =
-                zip::ZipArchive::new(cursor).expect("open ZIP should succeed");
+            let mut src = zip::ZipArchive::new(cursor).expect("open ZIP should succeed");
             let out_cursor = std::io::Cursor::new(&mut out_buf);
             let mut dst = zip::ZipWriter::new(out_cursor);
             for i in 0..src.len() {
@@ -1406,8 +1386,7 @@ mod tests {
                     let mut buf = Vec::new();
                     std::io::Read::read_to_end(&mut entry, &mut buf)
                         .expect("read entry should succeed");
-                    std::io::Write::write_all(&mut dst, &buf)
-                        .expect("write entry should succeed");
+                    std::io::Write::write_all(&mut dst, &buf).expect("write entry should succeed");
                 }
             }
             dst.finish().expect("finish should succeed");
@@ -1450,9 +1429,7 @@ mod tests {
 
         match result.unwrap_err() {
             VerifyError::InvalidFile(_) => { /* expected */ }
-            other => panic!(
-                "expected VerifyError::InvalidFile, got: {other:?}"
-            ),
+            other => panic!("expected VerifyError::InvalidFile, got: {other:?}"),
         }
     }
 }

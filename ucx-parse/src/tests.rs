@@ -128,13 +128,13 @@ fn create_test_ucx(path: &Path) {
 
     // Options for STORED (no compression) — required for mimetype.
     // STORED（无压缩）选项 — mimetype 条目要求。
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     // Options for DEFLATED (compressed) — used for all other entries.
     // DEFLATED（压缩）选项 — 用于其他所有条目。
-    let deflated_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let deflated_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // 1. mimetype — must be the first entry, STORED.
     // 1. mimetype — 必须是第一个条目，STORED。
@@ -142,19 +142,23 @@ fn create_test_ucx(path: &Path) {
     zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
 
     // 2. META-INF/MANIFEST.MF
-    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts)
+        .unwrap();
     zip.write_all(manifest_mf.as_bytes()).unwrap();
 
     // 3. metadata/codex.json
-    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts)
+        .unwrap();
     zip.write_all(codex_json.as_bytes()).unwrap();
 
     // 4. content/struct.json
-    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.start_file("content/struct.json", deflated_opts)
+        .unwrap();
     zip.write_all(struct_json.as_bytes()).unwrap();
 
     // 5. content/chapter-001.md
-    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.start_file("content/chapter-001.md", deflated_opts)
+        .unwrap();
     zip.write_all(chapter_md.as_bytes()).unwrap();
 
     // Finalize the archive.
@@ -169,8 +173,8 @@ fn create_test_ucx_bad_mimetype(path: &Path) {
     let file = std::fs::File::create(path).expect("failed to create test ZIP file");
     let mut zip = zip::ZipWriter::new(file);
 
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     // Write an invalid mimetype.
     // 写入无效的 mimetype。
@@ -187,10 +191,10 @@ fn create_test_ucx_no_manifest(path: &Path) {
     let file = std::fs::File::create(path).expect("failed to create test ZIP file");
     let mut zip = zip::ZipWriter::new(file);
 
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
-    let deflated_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // mimetype is valid, but no MANIFEST.MF.
     // mimetype 有效，但没有 MANIFEST.MF。
@@ -199,10 +203,12 @@ fn create_test_ucx_no_manifest(path: &Path) {
 
     // Include codex and struct but skip manifest.
     // 包含 codex 和 struct 但跳过 manifest。
-    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts)
+        .unwrap();
     zip.write_all(test_codex_json().as_bytes()).unwrap();
 
-    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.start_file("content/struct.json", deflated_opts)
+        .unwrap();
     zip.write_all(test_struct_json().as_bytes()).unwrap();
 
     zip.finish().unwrap();
@@ -320,7 +326,9 @@ fn test_verify_hashes() {
 
     // Verify all hashes.
     // 验证所有哈希。
-    let results = archive.verify_hashes().expect("verify_hashes should succeed");
+    let results = archive
+        .verify_hashes()
+        .expect("verify_hashes should succeed");
 
     // All results should be valid.
     // 所有结果应为有效。
@@ -351,7 +359,10 @@ fn test_list_files() {
 
     // Should contain all expected entries.
     // 应包含所有预期的条目。
-    assert!(files.contains(&"mimetype".to_string()), "should contain mimetype");
+    assert!(
+        files.contains(&"mimetype".to_string()),
+        "should contain mimetype"
+    );
     assert!(
         files.contains(&"META-INF/MANIFEST.MF".to_string()),
         "should contain MANIFEST.MF"
@@ -411,10 +422,7 @@ fn test_extract_to() {
     ];
     for expected in &expected_files {
         let file_path = output_dir.join(expected);
-        assert!(
-            file_path.exists(),
-            "expected file should exist: {expected}"
-        );
+        assert!(file_path.exists(), "expected file should exist: {expected}");
     }
 
     // Verify the returned list contains all expected entries.
@@ -428,8 +436,8 @@ fn test_extract_to() {
 
     // Verify content of mimetype matches the expected value.
     // 验证 mimetype 的内容与预期值匹配。
-    let mimetype_content = std::fs::read_to_string(output_dir.join("mimetype"))
-        .expect("should read mimetype");
+    let mimetype_content =
+        std::fs::read_to_string(output_dir.join("mimetype")).expect("should read mimetype");
     assert_eq!(mimetype_content, "application/vnd.unicodex+zip");
 
     // Verify content of chapter file matches the original.
@@ -442,8 +450,8 @@ fn test_extract_to() {
     // 验证 codex.json 内容可以正确解析。
     let codex_content = std::fs::read_to_string(output_dir.join("metadata/codex.json"))
         .expect("should read codex.json");
-    let codex: ucx_types::Codex = serde_json::from_str(&codex_content)
-        .expect("extracted codex.json should be valid JSON");
+    let codex: ucx_types::Codex =
+        serde_json::from_str(&codex_content).expect("extracted codex.json should be valid JSON");
     assert_eq!(codex.title.main, "测试小说");
 }
 
@@ -473,13 +481,17 @@ fn create_test_ucx_with_extra_entry(path: &Path, evil_entry_name: &str) {
 
     zip.start_file("mimetype", stored_opts).unwrap();
     zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
-    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts)
+        .unwrap();
     zip.write_all(manifest_mf.as_bytes()).unwrap();
-    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts)
+        .unwrap();
     zip.write_all(codex_json.as_bytes()).unwrap();
-    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.start_file("content/struct.json", deflated_opts)
+        .unwrap();
     zip.write_all(struct_json.as_bytes()).unwrap();
-    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.start_file("content/chapter-001.md", deflated_opts)
+        .unwrap();
     zip.write_all(chapter_md.as_bytes()).unwrap();
 
     // The malicious entry. `start_file` preserves the raw name verbatim, which is
@@ -505,10 +517,10 @@ fn create_test_ucx_with_extra_entry(path: &Path, evil_entry_name: &str) {
 fn test_extract_to_rejects_zip_slip_entries() {
     let evil_names = [
         "C:/Windows/Temp/ucx_audit_canary.txt", // Windows drive-absolute
-        "sub\\escape.txt",                       // backslash
-        "../../escape.txt",                      // parent traversal
-        "/etc/escape.txt",                       // POSIX absolute
-        "content/NUL",                           // Windows reserved name
+        "sub\\escape.txt",                      // backslash
+        "../../escape.txt",                     // parent traversal
+        "/etc/escape.txt",                      // POSIX absolute
+        "content/NUL",                          // Windows reserved name
     ];
 
     for name in evil_names {
@@ -517,7 +529,8 @@ fn test_extract_to_rejects_zip_slip_entries() {
         create_test_ucx_with_extra_entry(&ucx_path, name);
 
         let output_dir = tmp.path().join("out");
-        let mut archive = open(&ucx_path).expect("open() should accept the otherwise-valid archive");
+        let mut archive =
+            open(&ucx_path).expect("open() should accept the otherwise-valid archive");
         let result = archive.extract_to(&output_dir);
 
         assert!(
@@ -562,24 +575,28 @@ fn create_test_ucx_with_encrypted_chapter(path: &Path) {
     let file = std::fs::File::create(path).expect("failed to create test ZIP file");
     let mut zip = zip::ZipWriter::new(file);
 
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
-    let deflated_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     zip.start_file("mimetype", stored_opts).unwrap();
     zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
 
-    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts)
+        .unwrap();
     zip.write_all(manifest_mf.as_bytes()).unwrap();
 
-    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts)
+        .unwrap();
     zip.write_all(codex_json.as_bytes()).unwrap();
 
-    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.start_file("content/struct.json", deflated_opts)
+        .unwrap();
     zip.write_all(struct_json.as_bytes()).unwrap();
 
-    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.start_file("content/chapter-001.md", deflated_opts)
+        .unwrap();
     zip.write_all(&encrypted_content).unwrap();
 
     zip.finish().unwrap();
@@ -600,7 +617,10 @@ fn test_is_chapter_encrypted_with_ucxe_magic() {
         .is_chapter_encrypted("chapter-001.md")
         .expect("is_chapter_encrypted should not error");
 
-    assert!(encrypted, "chapter with UCXE magic should be detected as encrypted");
+    assert!(
+        encrypted,
+        "chapter with UCXE magic should be detected as encrypted"
+    );
 }
 
 /// Test: is_chapter_encrypted should return false for normal plaintext data.
@@ -618,7 +638,10 @@ fn test_is_chapter_encrypted_with_normal_data() {
         .is_chapter_encrypted("chapter-001.md")
         .expect("is_chapter_encrypted should not error");
 
-    assert!(!encrypted, "normal plaintext chapter should not be detected as encrypted");
+    assert!(
+        !encrypted,
+        "normal plaintext chapter should not be detected as encrypted"
+    );
 }
 
 /// Test: read_chapter on an encrypted chapter should return ParseError::Encrypted.
@@ -633,7 +656,10 @@ fn test_read_chapter_encrypted_returns_error() {
     let mut archive = open(&ucx_path).expect("open() should succeed");
 
     let result = archive.read_chapter("chapter-001.md");
-    assert!(result.is_err(), "read_chapter should fail for encrypted chapter");
+    assert!(
+        result.is_err(),
+        "read_chapter should fail for encrypted chapter"
+    );
 
     let err = result.unwrap_err();
     assert!(
@@ -737,24 +763,28 @@ fn create_test_ucx_with_ucx_version(path: &Path, ucx_version: &str) {
     let file = std::fs::File::create(path).expect("failed to create test ZIP file");
     let mut zip = zip::ZipWriter::new(file);
 
-    let stored_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
-    let deflated_opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let stored_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let deflated_opts =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     zip.start_file("mimetype", stored_opts).unwrap();
     zip.write_all(UCX_MIMETYPE.as_bytes()).unwrap();
 
-    zip.start_file("META-INF/MANIFEST.MF", deflated_opts).unwrap();
+    zip.start_file("META-INF/MANIFEST.MF", deflated_opts)
+        .unwrap();
     zip.write_all(mf.as_bytes()).unwrap();
 
-    zip.start_file("metadata/codex.json", deflated_opts).unwrap();
+    zip.start_file("metadata/codex.json", deflated_opts)
+        .unwrap();
     zip.write_all(codex_json.as_bytes()).unwrap();
 
-    zip.start_file("content/struct.json", deflated_opts).unwrap();
+    zip.start_file("content/struct.json", deflated_opts)
+        .unwrap();
     zip.write_all(struct_json.as_bytes()).unwrap();
 
-    zip.start_file("content/chapter-001.md", deflated_opts).unwrap();
+    zip.start_file("content/chapter-001.md", deflated_opts)
+        .unwrap();
     zip.write_all(chapter_md.as_bytes()).unwrap();
 
     zip.finish().unwrap();

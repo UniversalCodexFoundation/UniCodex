@@ -30,8 +30,7 @@ fn test_full_round_trip() {
         ..Default::default()
     };
 
-    ucx_init::init(&project_dir, &init_options)
-        .expect("init should succeed");
+    ucx_init::init(&project_dir, &init_options).expect("init should succeed");
 
     // Verify project files were created.
     // 验证项目文件已创建。
@@ -42,8 +41,7 @@ fn test_full_round_trip() {
     // --- Step 2: Build the UCX file. ---
     // --- 步骤 2：构建 UCX 文件。 ---
     let build_options = ucx_build::BuildOptions::default();
-    let ucx_path = ucx_build::build(&project_dir, &build_options)
-        .expect("build should succeed");
+    let ucx_path = ucx_build::build(&project_dir, &build_options).expect("build should succeed");
 
     // Verify the .ucx file was created and has content.
     // 验证 .ucx 文件已创建且有内容。
@@ -53,8 +51,7 @@ fn test_full_round_trip() {
 
     // --- Step 3: Parse the UCX file and verify metadata. ---
     // --- 步骤 3：解析 UCX 文件并验证元数据。 ---
-    let mut archive = ucx_parse::open(&ucx_path)
-        .expect("parse should succeed");
+    let mut archive = ucx_parse::open(&ucx_path).expect("parse should succeed");
 
     // Verify codex metadata matches what we initialized.
     // 验证 codex 元数据与初始化内容匹配。
@@ -99,10 +96,7 @@ fn test_full_round_trip() {
     let chapter = archive
         .read_chapter("chapter-001.md")
         .expect("should read chapter");
-    assert!(
-        chapter.contains("第一章"),
-        "chapter should contain heading"
-    );
+    assert!(chapter.contains("第一章"), "chapter should contain heading");
     assert!(
         chapter.contains("开始你的创作"),
         "chapter should contain placeholder text"
@@ -161,8 +155,7 @@ fn test_build_with_custom_options() {
         ..Default::default()
     };
 
-    let ucx_path = ucx_build::build(&project_dir, &options)
-        .expect("build failed");
+    let ucx_path = ucx_build::build(&project_dir, &options).expect("build failed");
 
     // Verify output path matches expectations.
     // 验证输出路径符合预期。
@@ -257,8 +250,8 @@ fn test_multi_chapter_build() {
 
     // Build.
     // 构建。
-    let ucx_path = ucx_build::build(&project_dir, &ucx_build::BuildOptions::default())
-        .expect("build failed");
+    let ucx_path =
+        ucx_build::build(&project_dir, &ucx_build::BuildOptions::default()).expect("build failed");
 
     // Parse and verify.
     // 解析并验证。

@@ -61,7 +61,13 @@ pub fn encrypt(
     // 3. Encrypt with Payload { msg, aad } so the AAD is bound into the tag.
     //    使用 Payload { msg, aad } 将 AAD 绑入认证标签。
     let ciphertext_with_tag = cipher
-        .encrypt(&nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::InvalidFormat("AES-256-GCM encryption failed".to_string()))?;
 
     // 4. Split ciphertext and tag (last 16 bytes are tag).

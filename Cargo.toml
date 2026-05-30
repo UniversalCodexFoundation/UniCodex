@@ -127,6 +127,7 @@ anyhow = "1.0"                                       # Application error handlin
 
 # --- CLI / 命令行 ---
 clap = { version = "4.5", features = ["derive"] }    # CLI argument parsing / 命令行参数解析
+rpassword = "7"                                      # No-echo passphrase prompt / 无回显口令输入
 
 # --- Async runtime / 异步运行时 ---
 tokio = { version = "1.49", features = ["full"] }    # Async runtime for network ops / 异步运行时（网络操作）

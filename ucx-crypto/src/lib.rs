@@ -335,7 +335,15 @@ pub fn encrypt(
 
     // Step 3–5: Encrypt and build UCXE structure.
     // 第 3–5 步：加密并构建 UCXE 结构。
-    let ucxe = encrypt_to_ucxe(key, &plaintext, algorithm, is_chunked, Kdf::None, &format::KdfParams::None, &[])?;
+    let ucxe = encrypt_to_ucxe(
+        key,
+        &plaintext,
+        algorithm,
+        is_chunked,
+        Kdf::None,
+        &format::KdfParams::None,
+        &[],
+    )?;
 
     // Step 6: Serialize and write to destination.
     // 第 6 步：序列化并写入目标文件。
@@ -368,10 +376,7 @@ pub fn encrypt(
 ///
 /// Returns the decrypted plaintext bytes, or a `CryptoError` on failure.
 /// 返回解密后的明文字节，或在失败时返回 `CryptoError`。
-pub fn decrypt(
-    source: &Path,
-    key: &[u8; 32],
-) -> Result<Vec<u8>, CryptoError> {
+pub fn decrypt(source: &Path, key: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
     // I/O errors surface as-is (they reflect the caller's environment, not a
     // ciphertext-content issue). All cryptographic / parsing errors collapse
     // into the opaque `DecryptionFailed` variant so attackers cannot learn
@@ -387,10 +392,7 @@ pub fn decrypt(
 /// Kept private so callers cannot depend on the exact error discrimination.
 ///
 /// 内部实现，返回真实错误类型；保持私有，使外部调用方无法依赖具体错误变体。
-fn decrypt_internal(
-    source: &Path,
-    key: &[u8; 32],
-) -> Result<Vec<u8>, CryptoError> {
+fn decrypt_internal(source: &Path, key: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
     // Step 1: Read the UCXE file bytes.
     // 第 1 步：读取 UCXE 文件字节。
     let data = std::fs::read(source)?;
@@ -467,7 +469,11 @@ fn encrypt_with_passphrase_and_params(
 
     // Step 2: Determine output length — AES-CBC needs 64 bytes, others need 32.
     // 第 2 步：确定输出长度 —— AES-CBC 需要 64 字节，其他需要 32 字节。
-    let output_len = if algorithm == Algorithm::Aes256Cbc { 64 } else { 32 };
+    let output_len = if algorithm == Algorithm::Aes256Cbc {
+        64
+    } else {
+        32
+    };
 
     // Step 3: NFC-normalize the passphrase before KDF. This makes two visually
     //         identical passphrases with different code-point sequences yield
@@ -493,24 +499,26 @@ fn encrypt_with_passphrase_and_params(
     // 第 5 步：判断是否需要分块模式。
     // AES-CBC does not support chunked mode, so skip for CBC even if large.
     // AES-CBC 不支持分块模式，因此即使文件很大也不使用分块。
-    let is_chunked = algorithm != Algorithm::Aes256Cbc
-        && plaintext.len() > chunked::CHUNKED_THRESHOLD as usize;
+    let is_chunked =
+        algorithm != Algorithm::Aes256Cbc && plaintext.len() > chunked::CHUNKED_THRESHOLD as usize;
 
     // Step 6: Extract the 32-byte encryption key (first 32 bytes of derived output).
     // 第 6 步：提取 32 字节加密密钥（派生输出的前 32 字节）。
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let key: Zeroizing<[u8; 32]> = Zeroizing::new(
-        derived[..32].try_into().map_err(|_| {
-            CryptoError::KeyDerivation("derived key shorter than 32 bytes / 派生密钥不足 32 字节".into())
-        })?,
-    );
+    let key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().map_err(|_| {
+        CryptoError::KeyDerivation(
+            "derived key shorter than 32 bytes / 派生密钥不足 32 字节".into(),
+        )
+    })?);
 
     // Step 7: Encrypt and build UCXE. For AES-CBC, pass the full 64-byte key via special path.
     // 第 7 步：加密并构建 UCXE。对于 AES-CBC，通过特殊路径传递完整 64 字节密钥。
     let ucxe = if algorithm == Algorithm::Aes256Cbc {
         encrypt_aes_cbc_to_ucxe(&derived, &plaintext, kdf_type, kdf_params, &salt)?
     } else {
-        encrypt_to_ucxe(&key, &plaintext, algorithm, is_chunked, kdf_type, kdf_params, &salt)?
+        encrypt_to_ucxe(
+            &key, &plaintext, algorithm, is_chunked, kdf_type, kdf_params, &salt,
+        )?
     };
 
     // Step 8: Serialize and write.
@@ -538,10 +546,7 @@ fn encrypt_with_passphrase_and_params(
 ///
 /// Returns the decrypted plaintext bytes, or a `CryptoError` on failure.
 /// 返回解密后的明文字节，或在失败时返回 `CryptoError`。
-pub fn decrypt_with_passphrase(
-    source: &Path,
-    passphrase: &str,
-) -> Result<Vec<u8>, CryptoError> {
+pub fn decrypt_with_passphrase(source: &Path, passphrase: &str) -> Result<Vec<u8>, CryptoError> {
     // Public API: collapse all crypto/parsing errors to `DecryptionFailed`.
     // I/O errors are preserved.
     // 公开 API：将所有加密/解析错误统一塌缩为 `DecryptionFailed`；I/O 错误保留。
@@ -572,7 +577,11 @@ fn decrypt_with_passphrase_internal(
 
     // Step 3: Determine output length based on algorithm.
     // 第 3 步：根据算法确定输出长度。
-    let output_len = if ucxe.header.algorithm == Algorithm::Aes256Cbc { 64 } else { 32 };
+    let output_len = if ucxe.header.algorithm == Algorithm::Aes256Cbc {
+        64
+    } else {
+        32
+    };
 
     // Step 4: Convert salt to fixed-size array.
     // 第 4 步：将盐值转换为固定大小数组。
@@ -601,11 +610,11 @@ fn decrypt_with_passphrase_internal(
     if ucxe.header.algorithm == Algorithm::Aes256Cbc {
         decrypt_aes_cbc_payload(&derived, &ucxe)
     } else {
-        let key: Zeroizing<[u8; 32]> = Zeroizing::new(
-            derived[..32].try_into().map_err(|_| {
-                CryptoError::KeyDerivation("derived key shorter than 32 bytes / 派生密钥不足 32 字节".into())
-            })?,
-        );
+        let key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().map_err(|_| {
+            CryptoError::KeyDerivation(
+                "derived key shorter than 32 bytes / 派生密钥不足 32 字节".into(),
+            )
+        })?);
         decrypt_ucxe_payload(&key, &ucxe)
     }
 }
@@ -672,8 +681,7 @@ fn encrypt_to_ucxe(
         let mut base_nonce = [0u8; 12];
         rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut base_nonce);
 
-        let chunked_ct =
-            chunked::encrypt_chunked(key, &base_nonce, plaintext, algorithm, &aad)?;
+        let chunked_ct = chunked::encrypt_chunked(key, &base_nonce, plaintext, algorithm, &aad)?;
         let serialized = chunked::serialize_chunks(&chunked_ct);
 
         Ok(format::UcxeFile {
@@ -725,16 +733,17 @@ fn encrypt_aes_cbc_to_ucxe(
     // Split derived key into enc_key (first 32B) and mac_key (last 32B).
     // 将派生密钥分为 enc_key（前 32B）和 mac_key（后 32B）。
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(
-        derived[..32].try_into().map_err(|_| {
-            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
-        })?,
-    );
-    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(
-        derived[32..64].try_into().map_err(|_| {
-            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
-        })?,
-    );
+    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().map_err(|_| {
+        CryptoError::KeyDerivation(
+            "derived key shorter than 64 bytes / 派生密钥不足 64 字节".into(),
+        )
+    })?);
+    let mac_key: Zeroizing<[u8; 32]> =
+        Zeroizing::new(derived[32..64].try_into().map_err(|_| {
+            CryptoError::KeyDerivation(
+                "derived key shorter than 64 bytes / 派生密钥不足 64 字节".into(),
+            )
+        })?);
 
     // Build header first so we can pass its serialized bytes as HMAC AAD.
     // 先构建 header，以便把其序列化字节作为 HMAC 的 AAD。
@@ -749,8 +758,7 @@ fn encrypt_aes_cbc_to_ucxe(
     };
     let aad = header.to_bytes();
 
-    let (ciphertext, iv, hmac_tag) =
-        aes_cbc::encrypt(&enc_key, &mac_key, plaintext, &aad)?;
+    let (ciphertext, iv, hmac_tag) = aes_cbc::encrypt(&enc_key, &mac_key, plaintext, &aad)?;
 
     Ok(format::UcxeFile {
         header,
@@ -765,10 +773,7 @@ fn encrypt_aes_cbc_to_ucxe(
 /// Core decryption logic for AEAD algorithms (AES-GCM, ChaCha20-Poly1305).
 ///
 /// AEAD 算法（AES-GCM, ChaCha20-Poly1305）的核心解密逻辑。
-fn decrypt_ucxe_payload(
-    key: &[u8; 32],
-    ucxe: &format::UcxeFile,
-) -> Result<Vec<u8>, CryptoError> {
+fn decrypt_ucxe_payload(key: &[u8; 32], ucxe: &format::UcxeFile) -> Result<Vec<u8>, CryptoError> {
     let algorithm = ucxe.header.algorithm;
 
     // Recompute the AAD from the parsed header, KDF parameters, and salt.
@@ -834,23 +839,28 @@ fn decrypt_aes_cbc_payload(
     ucxe: &format::UcxeFile,
 ) -> Result<Vec<u8>, CryptoError> {
     // Zeroizing 包装确保密钥在 drop 时被安全清零。
-    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(
-        derived[..32].try_into().map_err(|_| {
-            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
-        })?,
-    );
-    let mac_key: Zeroizing<[u8; 32]> = Zeroizing::new(
-        derived[32..64].try_into().map_err(|_| {
-            CryptoError::KeyDerivation("derived key shorter than 64 bytes / 派生密钥不足 64 字节".into())
-        })?,
-    );
+    let enc_key: Zeroizing<[u8; 32]> = Zeroizing::new(derived[..32].try_into().map_err(|_| {
+        CryptoError::KeyDerivation(
+            "derived key shorter than 64 bytes / 派生密钥不足 64 字节".into(),
+        )
+    })?);
+    let mac_key: Zeroizing<[u8; 32]> =
+        Zeroizing::new(derived[32..64].try_into().map_err(|_| {
+            CryptoError::KeyDerivation(
+                "derived key shorter than 64 bytes / 派生密钥不足 64 字节".into(),
+            )
+        })?);
 
-    let iv: [u8; 16] = ucxe.iv.clone().try_into().map_err(|_| {
-        CryptoError::InvalidFormat("AES-CBC IV must be 16 bytes".into())
-    })?;
-    let hmac_tag: [u8; 32] = ucxe.tag.clone().try_into().map_err(|_| {
-        CryptoError::InvalidFormat("AES-CBC HMAC tag must be 32 bytes".into())
-    })?;
+    let iv: [u8; 16] = ucxe
+        .iv
+        .clone()
+        .try_into()
+        .map_err(|_| CryptoError::InvalidFormat("AES-CBC IV must be 16 bytes".into()))?;
+    let hmac_tag: [u8; 32] = ucxe
+        .tag
+        .clone()
+        .try_into()
+        .map_err(|_| CryptoError::InvalidFormat("AES-CBC HMAC tag must be 32 bytes".into()))?;
 
     // Recompute AAD from the parsed header so HMAC verification also covers
     // the UCXE header bytes; any header tamper → MAC mismatch.
@@ -952,7 +962,9 @@ mod tests {
 
     /// Helper: write test plaintext to a temp file and return the paths.
     /// 辅助函数：将测试明文写入临时文件并返回路径。
-    fn setup_temp_files(plaintext: &[u8]) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    fn setup_temp_files(
+        plaintext: &[u8],
+    ) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
         let dir = tempfile::tempdir().expect("failed to create temp dir");
         let src = dir.path().join("plain.txt");
         let dst = dir.path().join("encrypted.ucxe");
@@ -1007,12 +1019,17 @@ mod tests {
         };
 
         encrypt_with_passphrase_and_params(
-            &src, &dst, "test-passphrase", Algorithm::Aes256Gcm, Kdf::Argon2id, &kdf_params,
+            &src,
+            &dst,
+            "test-passphrase",
+            Algorithm::Aes256Gcm,
+            Kdf::Argon2id,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
-        let decrypted = decrypt_with_passphrase(&dst, "test-passphrase")
-            .expect("decrypt should succeed");
+        let decrypted =
+            decrypt_with_passphrase(&dst, "test-passphrase").expect("decrypt should succeed");
 
         assert_eq!(decrypted, plaintext);
     }
@@ -1027,16 +1044,22 @@ mod tests {
         let plaintext = b"Secret data with PBKDF2 KDF";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
 
         encrypt_with_passphrase_and_params(
-            &src, &dst, "test-passphrase", Algorithm::ChaCha20Poly1305,
-            Kdf::Pbkdf2HmacSha256, &kdf_params,
+            &src,
+            &dst,
+            "test-passphrase",
+            Algorithm::ChaCha20Poly1305,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
-        let decrypted = decrypt_with_passphrase(&dst, "test-passphrase")
-            .expect("decrypt should succeed");
+        let decrypted =
+            decrypt_with_passphrase(&dst, "test-passphrase").expect("decrypt should succeed");
 
         assert_eq!(decrypted, plaintext);
     }
@@ -1070,11 +1093,17 @@ mod tests {
         let plaintext = b"passphrase-protected data";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
 
         encrypt_with_passphrase_and_params(
-            &src, &dst, "correct-passphrase", Algorithm::Aes256Gcm,
-            Kdf::Pbkdf2HmacSha256, &kdf_params,
+            &src,
+            &dst,
+            "correct-passphrase",
+            Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
@@ -1109,16 +1138,22 @@ mod tests {
         let plaintext = b"AES-CBC with passphrase mode";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
 
         encrypt_with_passphrase_and_params(
-            &src, &dst, "cbc-passphrase", Algorithm::Aes256Cbc,
-            Kdf::Pbkdf2HmacSha256, &kdf_params,
+            &src,
+            &dst,
+            "cbc-passphrase",
+            Algorithm::Aes256Cbc,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
-        let decrypted = decrypt_with_passphrase(&dst, "cbc-passphrase")
-            .expect("decrypt should succeed");
+        let decrypted =
+            decrypt_with_passphrase(&dst, "cbc-passphrase").expect("decrypt should succeed");
 
         assert_eq!(decrypted, plaintext);
     }
@@ -1211,10 +1246,16 @@ mod tests {
         let plaintext = b"CRYPTO-2: kdf-params must be AAD-bound";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
         encrypt_with_passphrase_and_params(
-            &src, &dst, "kdf-aad-passphrase", Algorithm::Aes256Gcm,
-            Kdf::Pbkdf2HmacSha256, &kdf_params,
+            &src,
+            &dst,
+            "kdf-aad-passphrase",
+            Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
@@ -1250,10 +1291,16 @@ mod tests {
         let plaintext = b"CRYPTO-2: salt must be AAD-bound";
         let (_dir, src, dst) = setup_temp_files(plaintext);
 
-        let kdf_params = format::KdfParams::Pbkdf2 { iterations: kdf::PBKDF2_MIN_ITERATIONS };
+        let kdf_params = format::KdfParams::Pbkdf2 {
+            iterations: kdf::PBKDF2_MIN_ITERATIONS,
+        };
         encrypt_with_passphrase_and_params(
-            &src, &dst, "salt-aad-passphrase", Algorithm::Aes256Gcm,
-            Kdf::Pbkdf2HmacSha256, &kdf_params,
+            &src,
+            &dst,
+            "salt-aad-passphrase",
+            Algorithm::Aes256Gcm,
+            Kdf::Pbkdf2HmacSha256,
+            &kdf_params,
         )
         .expect("encrypt should succeed");
 
@@ -1290,8 +1337,7 @@ mod tests {
 
         // Encrypt with AES-256-GCM (no KDF, non-chunked → flags = 0x00).
         // 使用 AES-256-GCM 加密（无 KDF，非分块 → flags = 0x00）。
-        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm)
-            .expect("encrypt should succeed");
+        encrypt(&src, &dst, &key, Algorithm::Aes256Gcm).expect("encrypt should succeed");
 
         // Sanity: decrypt must succeed with untampered file.
         // 健全性检查：未篡改文件解密应成功。

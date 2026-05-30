@@ -31,12 +31,12 @@ use tracing::{info, warn};
 
 // Import shared types from ucx-types.
 // 从 ucx-types 导入共享类型。
+use ucx_types::codex::{Creator, Dates};
 use ucx_types::project::{
     BookSection, BuildSection, IdentifierSection, ProjectConfig, ProjectSection, TitleSection,
 };
 use ucx_types::structure::{Structure, StructureNode};
 use ucx_types::ucx_id::UcxId;
-use ucx_types::codex::{Creator, Dates};
 
 // =============================================================================
 // Constants / 常量
@@ -271,9 +271,7 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     if config_path.exists() && !options.force {
         // Return an error indicating the project already exists.
         // 返回错误，表示项目已存在。
-        return Err(InitError::AlreadyExists(
-            path.display().to_string(),
-        ));
+        return Err(InitError::AlreadyExists(path.display().to_string()));
     }
 
     // -------------------------------------------------------------------------
@@ -294,7 +292,11 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
     // -------------------------------------------------------------------------
     // Default: only content/. With --full: content/, assets/, extras/.
     // 默认：仅 content/。使用 --full 时：content/、assets/、extras/。
-    let dirs = if options.full { FULL_DIRS } else { DEFAULT_DIRS };
+    let dirs = if options.full {
+        FULL_DIRS
+    } else {
+        DEFAULT_DIRS
+    };
     for dir_name in dirs {
         let dir_path = path.join(dir_name);
         // create_dir_all is idempotent — safe to call even if dir exists.
@@ -325,13 +327,13 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
 
     // Append commented-out examples for optional TOML sections.
     // 追加注释掉的可选 TOML 段示例。
-    toml_content.push_str(r#"
+    toml_content.push_str(
+        r#"
 # --- 以下为可选配置段示例（取消注释即可启用） ---
 
 # [series]
 # name = "系列名称"
 # index = 1
-# total = 5
 
 # [description]
 # short = "一句话简介（≤100字符）"
@@ -348,11 +350,10 @@ pub fn init(path: &Path, options: &InitOptions) -> Result<(), InitError> {
 # system = "age"
 # value = "all"
 
-# [dates]
-# created = "2026-01-01"
-# published = ""
-# modified = ""
-"#);
+# 注：[dates] 已在上方作为活动配置生成，如需补充 published/modified
+# 请直接在已有的 [dates] 表中添加，不要新建 [dates] 表（会导致重复键）。
+"#,
+    );
 
     fs::write(&config_path, &toml_content)?;
     info!(
@@ -483,7 +484,11 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
                 && let Some(ext) = entry_path.extension()
                 && ext == "md"
             {
-                let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                let file_name = entry_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
                 md_files.push(file_name);
             }
         }
@@ -500,7 +505,11 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
                 && let Some(ext) = entry_path.extension()
                 && ext == "md"
             {
-                let file_name = entry_path.file_name().unwrap().to_string_lossy().to_string();
+                let file_name = entry_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
                 content_md_files.push(file_name);
             }
         }
@@ -533,37 +542,39 @@ pub fn init_from_existing(path: &Path, options: &InitOptions) -> Result<(), Init
 
     // Generate structure nodes from file names.
     // 从文件名生成结构节点。
-    let structure_nodes: Vec<StructureNode> = all_files.iter().map(|file_name| {
-        // Infer title from file name: remove extension, replace - and _ with spaces.
-        // 从文件名推断标题：去掉扩展名，用空格替换 - 和 _。
-        let title = file_name
-            .trim_end_matches(".md")
-            .replace(['-', '_'], " ");
-        StructureNode {
-            title,
-            file: Some(file_name.clone()),
-            children: None,
-            node_type: None,
-            id: None,
-            name: None,
-            style: None,
-            encryption: None,
-        }
-    }).collect();
+    let structure_nodes: Vec<StructureNode> = all_files
+        .iter()
+        .map(|file_name| {
+            // Infer title from file name: remove extension, replace - and _ with spaces.
+            // 从文件名推断标题：去掉扩展名，用空格替换 - 和 _。
+            let title = file_name.trim_end_matches(".md").replace(['-', '_'], " ");
+            StructureNode {
+                title,
+                file: Some(file_name.clone()),
+                children: None,
+                node_type: None,
+                id: None,
+                name: None,
+                style: None,
+                encryption: None,
+            }
+        })
+        .collect();
 
     // Generate UCX ID and project config.
     // 生成 UCX ID 和项目配置。
     let ucx_id = UcxId::new();
     let project_config = build_project_config(&ucx_id, options);
     let mut toml_content = toml::to_string_pretty(&project_config)?;
-    toml_content.push_str(r#"
+    toml_content.push_str(
+        r#"
 # --- 以下为可选配置段示例（取消注释即可启用） ---
 
 # [series]
 # name = "系列名称"
 # index = 1
-# total = 5
-"#);
+"#,
+    );
     fs::write(&config_path, &toml_content)?;
 
     // Write struct.json.
@@ -810,9 +821,7 @@ fn validate_input(value: &str, field_name: &str, allow_long: bool) -> Result<(),
     // 拒绝包含控制字符（U+0000–U+001F）的字符串，
     // 制表符 (\t) 除外。换行符 (\n) 和回车符 (\r) 也被拒绝，
     // 因为 name/author 字段应为单行值。
-    if let Some(pos) = value.chars().position(|c| {
-        c.is_control() && c != '\t'
-    }) {
+    if let Some(pos) = value.chars().position(|c| c.is_control() && c != '\t') {
         return Err(InitError::InvalidInput(format!(
             "'{field_name}' contains a control character at position {pos}"
         )));
@@ -859,7 +868,8 @@ fn validate_language_tag(tag: &str) -> Result<(), InitError> {
         if part.is_empty() || part.len() > 8 || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(InitError::InvalidInput(format!(
                 "invalid BCP 47 language tag '{tag}': subtag {} ('{}') must be 1-8 alphanumeric characters",
-                i + 1, part
+                i + 1,
+                part
             )));
         }
     }
@@ -906,12 +916,24 @@ mod tests {
 
         // Verify the content/ subdirectory was created (default mode).
         // 验证 content/ 子目录已创建（默认模式）。
-        assert!(project_dir.join("content").is_dir(), "content/ should be a directory");
+        assert!(
+            project_dir.join("content").is_dir(),
+            "content/ should be a directory"
+        );
         // In default mode, assets/ and extras/ should NOT be created.
         // 默认模式下，assets/ 和 extras/ 不应被创建。
-        assert!(!project_dir.join("assets").exists(), "assets/ should not exist in default mode");
-        assert!(!project_dir.join("extras").exists(), "extras/ should not exist in default mode");
-        assert!(!project_dir.join("dist").exists(), "dist/ should not exist (created by build)");
+        assert!(
+            !project_dir.join("assets").exists(),
+            "assets/ should not exist in default mode"
+        );
+        assert!(
+            !project_dir.join("extras").exists(),
+            "extras/ should not exist in default mode"
+        );
+        assert!(
+            !project_dir.join("dist").exists(),
+            "dist/ should not exist (created by build)"
+        );
 
         // Verify unicodex.toml was created.
         // 验证 unicodex.toml 已创建。
@@ -926,7 +948,10 @@ mod tests {
         // Verify content/chapter-001.md was created.
         // 验证 content/chapter-001.md 已创建。
         let chapter_path = project_dir.join("content").join(FIRST_CHAPTER_FILE);
-        assert!(chapter_path.is_file(), "content/chapter-001.md should exist");
+        assert!(
+            chapter_path.is_file(),
+            "content/chapter-001.md should exist"
+        );
 
         // Verify the chapter content is correct.
         // 验证章节内容正确。
@@ -1003,8 +1028,8 @@ mod tests {
 
         // Deserialize it — should succeed.
         // 反序列化 — 应成功。
-        let config: ProjectConfig = toml::from_str(&toml_content)
-            .expect("generated unicodex.toml should be valid TOML");
+        let config: ProjectConfig =
+            toml::from_str(&toml_content).expect("generated unicodex.toml should be valid TOML");
 
         // Verify key fields match the options we provided.
         // 验证关键字段与我们提供的选项匹配。
@@ -1247,7 +1272,10 @@ mod tests {
             ..Default::default()
         };
         let result_ok = init(&project_dir, &options_ok);
-        assert!(result_ok.is_ok(), "should allow overlong name with allow_long_fields");
+        assert!(
+            result_ok.is_ok(),
+            "should allow overlong name with allow_long_fields"
+        );
     }
 
     /// Test (UX-002): Invalid BCP 47 language tags should be rejected.
@@ -1268,7 +1296,10 @@ mod tests {
                 ..Default::default()
             };
             let result = init(&project_dir, &options);
-            assert!(result.is_ok(), "should accept valid language tag: {valid_tag}");
+            assert!(
+                result.is_ok(),
+                "should accept valid language tag: {valid_tag}"
+            );
         }
 
         // Invalid tags should fail.
@@ -1282,7 +1313,10 @@ mod tests {
                 ..Default::default()
             };
             let result = init(&project_dir, &options);
-            assert!(result.is_err(), "should reject invalid language tag: '{invalid_tag}'");
+            assert!(
+                result.is_err(),
+                "should reject invalid language tag: '{invalid_tag}'"
+            );
         }
     }
 
@@ -1305,16 +1339,28 @@ mod tests {
 
         // Verify .git/ directory was created.
         // 验证 .git/ 目录已创建。
-        assert!(project_dir.join(".git").is_dir(), ".git/ directory should exist");
+        assert!(
+            project_dir.join(".git").is_dir(),
+            ".git/ directory should exist"
+        );
 
         // Verify .gitignore was created with expected content.
         // 验证 .gitignore 已创建且包含预期内容。
         let gitignore_path = project_dir.join(".gitignore");
         assert!(gitignore_path.is_file(), ".gitignore should exist");
         let gitignore = fs::read_to_string(&gitignore_path).unwrap();
-        assert!(gitignore.contains("dist/"), ".gitignore should ignore dist/");
-        assert!(gitignore.contains("*.ucx"), ".gitignore should ignore *.ucx");
-        assert!(gitignore.contains("target/"), ".gitignore should ignore target/");
+        assert!(
+            gitignore.contains("dist/"),
+            ".gitignore should ignore dist/"
+        );
+        assert!(
+            gitignore.contains("*.ucx"),
+            ".gitignore should ignore *.ucx"
+        );
+        assert!(
+            gitignore.contains("target/"),
+            ".gitignore should ignore target/"
+        );
     }
 
     /// Test (SUG-002): init_from_existing should create project from existing .md files.
@@ -1329,8 +1375,16 @@ mod tests {
         // Create some .md files in the project root.
         // 在项目根目录下创建一些 .md 文件。
         fs::write(project_dir.join("intro.md"), "# 引言\n\n引言内容。\n").unwrap();
-        fs::write(project_dir.join("chapter-01.md"), "# 第一章\n\n第一章内容。\n").unwrap();
-        fs::write(project_dir.join("chapter-02.md"), "# 第二章\n\n第二章内容。\n").unwrap();
+        fs::write(
+            project_dir.join("chapter-01.md"),
+            "# 第一章\n\n第一章内容。\n",
+        )
+        .unwrap();
+        fs::write(
+            project_dir.join("chapter-02.md"),
+            "# 第二章\n\n第二章内容。\n",
+        )
+        .unwrap();
 
         let options = InitOptions {
             name: "现有项目".to_string(),
@@ -1340,7 +1394,11 @@ mod tests {
             ..Default::default()
         };
         let result = init_from_existing(&project_dir, &options);
-        assert!(result.is_ok(), "init_from_existing should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "init_from_existing should succeed: {:?}",
+            result.err()
+        );
 
         // Verify unicodex.toml exists.
         // 验证 unicodex.toml 存在。
@@ -1358,6 +1416,10 @@ mod tests {
         assert!(struct_path.is_file());
         let struct_content = fs::read_to_string(&struct_path).unwrap();
         let structure: Structure = serde_json::from_str(&struct_content).unwrap();
-        assert_eq!(structure.structure.len(), 3, "should have 3 chapters from .md files");
+        assert_eq!(
+            structure.structure.len(),
+            3,
+            "should have 3 chapters from .md files"
+        );
     }
 }

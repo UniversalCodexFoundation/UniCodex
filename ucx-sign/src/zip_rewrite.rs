@@ -72,7 +72,9 @@ pub fn add_signature_files(
 
     // --- Create a new ZIP writer ---
     // 创建新的 ZIP writer。
-    let output_buf: Vec<u8> = Vec::with_capacity(zip_data.len() + sf_content.len() + ec_content.len() + cert_der.len() + 4096);
+    let output_buf: Vec<u8> = Vec::with_capacity(
+        zip_data.len() + sf_content.len() + ec_content.len() + cert_der.len() + 4096,
+    );
     let output_cursor = Cursor::new(output_buf);
     let mut writer = ZipWriter::new(output_cursor);
 
@@ -120,26 +122,25 @@ pub fn add_signature_files(
     // --- Add META-INF/signatures/{SIGNER_ID}.SF (DEFLATE) ---
     // 添加 META-INF/signatures/{SIGNER_ID}.SF（DEFLATE 压缩）。
     let sf_path = format!("META-INF/signatures/{signer_id}.SF");
-    let deflate_options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let deflate_options =
+        SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     writer.start_file(&sf_path, deflate_options).map_err(|e| {
         SignError::SigningFailed(format!("failed to start SF entry '{sf_path}': {e}"))
     })?;
-    writer.write_all(sf_content).map_err(|e| {
-        SignError::SigningFailed(format!("failed to write SF content: {e}"))
-    })?;
+    writer
+        .write_all(sf_content)
+        .map_err(|e| SignError::SigningFailed(format!("failed to write SF content: {e}")))?;
 
     // --- Add META-INF/signatures/{SIGNER_ID}.EC (STORED — binary data) ---
     // 添加 META-INF/signatures/{SIGNER_ID}.EC（STORED — 二进制数据）。
     let ec_path = format!("META-INF/signatures/{signer_id}.EC");
-    let stored_options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let stored_options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     writer.start_file(&ec_path, stored_options).map_err(|e| {
         SignError::SigningFailed(format!("failed to start EC entry '{ec_path}': {e}"))
     })?;
-    writer.write_all(ec_content).map_err(|e| {
-        SignError::SigningFailed(format!("failed to write EC content: {e}"))
-    })?;
+    writer
+        .write_all(ec_content)
+        .map_err(|e| SignError::SigningFailed(format!("failed to write EC content: {e}")))?;
 
     // --- Add META-INF/certs/{SIGNER_ID}.cert.pem (DEFLATE) ---
     // 添加 META-INF/certs/{SIGNER_ID}.cert.pem（DEFLATE 压缩）。
@@ -152,18 +153,20 @@ pub fn add_signature_files(
         })?;
 
     let cert_path = format!("META-INF/certs/{signer_id}.cert.pem");
-    writer.start_file(&cert_path, deflate_options).map_err(|e| {
-        SignError::SigningFailed(format!("failed to start cert entry '{cert_path}': {e}"))
-    })?;
-    writer.write_all(cert_pem.as_bytes()).map_err(|e| {
-        SignError::SigningFailed(format!("failed to write cert PEM content: {e}"))
-    })?;
+    writer
+        .start_file(&cert_path, deflate_options)
+        .map_err(|e| {
+            SignError::SigningFailed(format!("failed to start cert entry '{cert_path}': {e}"))
+        })?;
+    writer
+        .write_all(cert_pem.as_bytes())
+        .map_err(|e| SignError::SigningFailed(format!("failed to write cert PEM content: {e}")))?;
 
     // --- Finalize the ZIP and return bytes ---
     // 完成 ZIP 并返回字节。
-    let result_cursor = writer.finish().map_err(|e| {
-        SignError::SigningFailed(format!("failed to finalize ZIP archive: {e}"))
-    })?;
+    let result_cursor = writer
+        .finish()
+        .map_err(|e| SignError::SigningFailed(format!("failed to finalize ZIP archive: {e}")))?;
 
     Ok(result_cursor.into_inner())
 }
@@ -185,8 +188,7 @@ mod tests {
 
             // Add mimetype (STORED, as per UCX spec).
             // 添加 mimetype（STORED，按 UCX 规范）。
-            let stored = SimpleFileOptions::default()
-                .compression_method(CompressionMethod::Stored);
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
             zip_writer.start_file("mimetype", stored).unwrap();
             zip_writer
                 .write_all(b"application/vnd.unicodex+zip")
@@ -194,8 +196,8 @@ mod tests {
 
             // Add a MANIFEST.MF file.
             // 添加 MANIFEST.MF 文件。
-            let deflate = SimpleFileOptions::default()
-                .compression_method(CompressionMethod::Deflated);
+            let deflate =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
             zip_writer
                 .start_file("META-INF/MANIFEST.MF", deflate)
                 .unwrap();
@@ -232,8 +234,7 @@ mod tests {
         // The result should be parseable as a ZIP.
         // 结果应可被解析为 ZIP。
         let cursor = Cursor::new(&result);
-        let mut archive =
-            ZipArchive::new(cursor).expect("result should be a valid ZIP archive");
+        let mut archive = ZipArchive::new(cursor).expect("result should be a valid ZIP archive");
 
         // Verify the original entries are preserved.
         // 验证原始条目被保留。
@@ -268,9 +269,7 @@ mod tests {
         // Verify SF content is correct.
         // 验证 SF 内容正确。
         {
-            let mut sf_entry = archive
-                .by_name("META-INF/signatures/AUTHOR.SF")
-                .unwrap();
+            let mut sf_entry = archive.by_name("META-INF/signatures/AUTHOR.SF").unwrap();
             let mut sf_read = String::new();
             sf_entry.read_to_string(&mut sf_read).unwrap();
             assert_eq!(sf_read, "Signature-Version: 1.0\nTest: value\n");
@@ -279,9 +278,7 @@ mod tests {
         // Verify EC content is correct (binary).
         // 验证 EC 内容正确（二进制）。
         {
-            let mut ec_entry = archive
-                .by_name("META-INF/signatures/AUTHOR.EC")
-                .unwrap();
+            let mut ec_entry = archive.by_name("META-INF/signatures/AUTHOR.EC").unwrap();
             let mut ec_read = Vec::new();
             ec_entry.read_to_end(&mut ec_read).unwrap();
             assert_eq!(ec_read, ec);
@@ -290,9 +287,7 @@ mod tests {
         // Verify cert PEM exists and starts with the correct header.
         // 验证证书 PEM 存在并以正确的头部开始。
         {
-            let mut cert_entry = archive
-                .by_name("META-INF/certs/AUTHOR.cert.pem")
-                .unwrap();
+            let mut cert_entry = archive.by_name("META-INF/certs/AUTHOR.cert.pem").unwrap();
             let mut cert_read = String::new();
             cert_entry.read_to_string(&mut cert_read).unwrap();
             assert!(
@@ -307,14 +302,9 @@ mod tests {
     #[test]
     fn test_add_signature_files_preserves_content() {
         let original = create_test_zip();
-        let result = add_signature_files(
-            &original,
-            "SIGNER1",
-            b"sf-data",
-            b"ec-data",
-            b"cert-data",
-        )
-        .expect("add_signature_files should succeed");
+        let result =
+            add_signature_files(&original, "SIGNER1", b"sf-data", b"ec-data", b"cert-data")
+                .expect("add_signature_files should succeed");
 
         let cursor = Cursor::new(&result);
         let mut archive = ZipArchive::new(cursor).unwrap();

@@ -135,9 +135,7 @@ pub fn encrypt_paragraph(
     let aad: &[u8] = b"";
     let (ciphertext, nonce, tag) = match algorithm {
         Algorithm::Aes256Gcm => crate::aes_gcm::encrypt(key, plaintext.as_bytes(), aad)?,
-        Algorithm::ChaCha20Poly1305 => {
-            crate::chacha20::encrypt(key, plaintext.as_bytes(), aad)?
-        }
+        Algorithm::ChaCha20Poly1305 => crate::chacha20::encrypt(key, plaintext.as_bytes(), aad)?,
         // Unreachable because we already rejected CBC above.
         // 不可达，因为上面已经拒绝了 CBC。
         Algorithm::Aes256Cbc => unreachable!(),
@@ -231,9 +229,8 @@ pub fn decrypt_paragraph(
 
     // 6. Convert decrypted bytes to UTF-8 string.
     //    将解密后的字节转换为 UTF-8 字符串。
-    String::from_utf8(plaintext_bytes).map_err(|e| {
-        CryptoError::InvalidFormat(format!("decrypted data is not valid UTF-8: {e}"))
-    })
+    String::from_utf8(plaintext_bytes)
+        .map_err(|e| CryptoError::InvalidFormat(format!("decrypted data is not valid UTF-8: {e}")))
 }
 
 // =============================================================================
@@ -264,10 +261,8 @@ mod tests {
         let key = [0x7Fu8; 32];
         let plaintext = "Chapter 3: The Secret\n秘密章节的内容...";
 
-        let encrypted =
-            encrypt_paragraph(plaintext, &key, Algorithm::ChaCha20Poly1305).unwrap();
-        let decrypted =
-            decrypt_paragraph(&encrypted, &key, Algorithm::ChaCha20Poly1305).unwrap();
+        let encrypted = encrypt_paragraph(plaintext, &key, Algorithm::ChaCha20Poly1305).unwrap();
+        let decrypted = decrypt_paragraph(&encrypted, &key, Algorithm::ChaCha20Poly1305).unwrap();
 
         assert_eq!(decrypted, plaintext);
     }

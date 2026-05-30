@@ -139,6 +139,77 @@ impl StructureNode {
 }
 
 // =============================================================================
+// Resource limits for struct.json (shared DoS guard) / struct.json 资源上限（共享 DoS 防护）
+// =============================================================================
+
+/// Maximum accepted byte size of `content/struct.json` (parse-amplification DoS guard).
+/// 16 MiB — orders of magnitude above any legitimate novel structure.
+///
+/// `content/struct.json` 接受的最大字节大小（解析放大 DoS 防护）。16 MiB。
+pub const MAX_STRUCT_JSON_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Maximum total number of nodes in `struct.json`.
+/// `struct.json` 节点总数上限。
+pub const MAX_STRUCT_NODES: usize = 100_000;
+
+/// Maximum nesting depth of `struct.json`.
+/// `struct.json` 嵌套深度上限。
+pub const MAX_STRUCT_DEPTH: usize = 64;
+
+/// Error returned when a struct.json tree exceeds the node-count or depth caps.
+/// struct.json 树超过节点数或深度上限时返回的错误。
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum StructureLimitError {
+    /// Too many nodes in total. / 节点总数过多。
+    #[error("struct.json exceeds the maximum of {0} nodes / struct.json 节点数超过上限 {0}")]
+    TooManyNodes(usize),
+
+    /// Nesting too deep. / 嵌套过深。
+    #[error(
+        "struct.json nesting exceeds the maximum depth of {0} / struct.json 嵌套深度超过上限 {0}"
+    )]
+    TooDeep(usize),
+}
+
+/// Enforce node-count and nesting-depth limits on a parsed struct.json tree.
+///
+/// This is the **single shared** struct.json DoS guard, used on every untrusted
+/// entry point that parses struct.json (`ucx-build` build/dry_run/check and
+/// `ucx-version` auto/chapter/snapshot) so the bounds can never drift between
+/// crates. Uses an iterative depth-first traversal with an explicit stack (not
+/// native recursion) so that counting a maliciously deep tree cannot itself
+/// overflow the stack. Bounds both total node count (breadth) and nesting depth.
+///
+/// 对已解析的 struct.json 树强制节点数与嵌套深度上限。
+/// 这是 struct.json DoS 防护的**唯一共享**实现，被每个解析 struct.json 的不可信
+/// 入口（`ucx-build` 的 build/dry_run/check、`ucx-version` 的 auto/chapter/snapshot）
+/// 调用，使上界绝不会在 crate 间漂移。使用带显式栈的迭代式 DFS（而非原生递归），
+/// 使统计恶意超深树时自身不会栈溢出。同时限制节点总数（宽度）与嵌套深度。
+pub fn enforce_structure_limits(nodes: &[StructureNode]) -> Result<(), StructureLimitError> {
+    // Stack of (node, depth). Depth is 1-based for top-level nodes.
+    // (节点, 深度) 栈。顶层节点深度从 1 起。
+    let mut stack: Vec<(&StructureNode, usize)> = nodes.iter().map(|n| (n, 1usize)).collect();
+    let mut count = 0usize;
+
+    while let Some((node, depth)) = stack.pop() {
+        count += 1;
+        if count > MAX_STRUCT_NODES {
+            return Err(StructureLimitError::TooManyNodes(MAX_STRUCT_NODES));
+        }
+        if depth > MAX_STRUCT_DEPTH {
+            return Err(StructureLimitError::TooDeep(MAX_STRUCT_DEPTH));
+        }
+        if let Some(ref children) = node.children {
+            for child in children {
+                stack.push((child, depth + 1));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
 // Encryption / 加密配置
 // =============================================================================
 
@@ -253,39 +324,37 @@ mod tests {
         Structure {
             schema: Some("https://unicodex.org/schemas/struct-v1.json".to_string()),
             version: "1.0".to_string(),
-            structure: vec![
-                StructureNode {
-                    title: "第一卷 起始".to_string(),
-                    file: None,
-                    children: Some(vec![
-                        StructureNode {
-                            title: "第一章 开端".to_string(),
-                            file: Some("chapter-001.md".to_string()),
-                            children: None,
-                            node_type: None,
-                            id: None,
-                            name: None,
-                            style: None,
-                            encryption: None,
-                        },
-                        StructureNode {
-                            title: "第二章 相遇".to_string(),
-                            file: Some("chapter-002.md".to_string()),
-                            children: None,
-                            node_type: None,
-                            id: Some("ch-002".to_string()),
-                            name: None,
-                            style: None,
-                            encryption: None,
-                        },
-                    ]),
-                    node_type: Some("volume".to_string()),
-                    id: None,
-                    name: None,
-                    style: Some("volume-title".to_string()),
-                    encryption: None,
-                },
-            ],
+            structure: vec![StructureNode {
+                title: "第一卷 起始".to_string(),
+                file: None,
+                children: Some(vec![
+                    StructureNode {
+                        title: "第一章 开端".to_string(),
+                        file: Some("chapter-001.md".to_string()),
+                        children: None,
+                        node_type: None,
+                        id: None,
+                        name: None,
+                        style: None,
+                        encryption: None,
+                    },
+                    StructureNode {
+                        title: "第二章 相遇".to_string(),
+                        file: Some("chapter-002.md".to_string()),
+                        children: None,
+                        node_type: None,
+                        id: Some("ch-002".to_string()),
+                        name: None,
+                        style: None,
+                        encryption: None,
+                    },
+                ]),
+                node_type: Some("volume".to_string()),
+                id: None,
+                name: None,
+                style: Some("volume-title".to_string()),
+                encryption: None,
+            }],
         }
     }
 
@@ -326,10 +395,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: Structure = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.structure.len(), original.structure.len());
-        assert_eq!(
-            deserialized.structure[0].title,
-            original.structure[0].title
-        );
+        assert_eq!(deserialized.structure[0].title, original.structure[0].title);
     }
 
     #[test]
@@ -373,11 +439,7 @@ mod tests {
         // collect_files should recursively gather all leaf file paths.
         // collect_files 应递归收集所有叶子文件路径。
         let s = sample_structure();
-        let files: Vec<&str> = s
-            .structure
-            .iter()
-            .flat_map(|n| n.collect_files())
-            .collect();
+        let files: Vec<&str> = s.structure.iter().flat_map(|n| n.collect_files()).collect();
         assert_eq!(files, vec!["chapter-001.md", "chapter-002.md"]);
     }
 
@@ -414,9 +476,6 @@ mod tests {
         assert!(json.contains("\"message\""));
         // Round-trip / 往返
         let deserialized: StructureNode = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            deserialized.encryption.unwrap().algorithm,
-            "AES-256-GCM"
-        );
+        assert_eq!(deserialized.encryption.unwrap().algorithm, "AES-256-GCM");
     }
 }

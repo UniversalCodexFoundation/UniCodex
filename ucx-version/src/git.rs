@@ -31,9 +31,7 @@ use crate::{ChangeSet, UcxVersion, VersionError};
 ///
 /// * `project_path` - Path to the project root (must contain a `.git` directory).
 ///   项目根目录路径（必须包含 `.git` 目录）。
-pub fn detect_changes_git(
-    project_path: &Path,
-) -> Result<(UcxVersion, ChangeSet), VersionError> {
+pub fn detect_changes_git(project_path: &Path) -> Result<(UcxVersion, ChangeSet), VersionError> {
     // Open the Git repository via git2.
     // 通过 git2 打开 Git 仓库。
     let repo = Repository::open(project_path)?;
@@ -52,15 +50,13 @@ pub fn detect_changes_git(
 
             // Get the tree from the tag's commit.
             // 获取标签 commit 的 tree。
-            let tag_commit = repo
-                .find_commit(tag_oid)
-                .or_else(|_| {
-                    // The OID might be a tag object, not a commit directly.
-                    // Peel the tag to a commit.
-                    // OID 可能是 tag 对象而非直接的 commit，需要剥离到 commit。
-                    let obj = repo.find_object(tag_oid, None)?;
-                    obj.peel_to_commit()
-                })?;
+            let tag_commit = repo.find_commit(tag_oid).or_else(|_| {
+                // The OID might be a tag object, not a commit directly.
+                // Peel the tag to a commit.
+                // OID 可能是 tag 对象而非直接的 commit，需要剥离到 commit。
+                let obj = repo.find_object(tag_oid, None)?;
+                obj.peel_to_commit()
+            })?;
             let base_tree = tag_commit.tree()?;
 
             // Get the current HEAD tree.
@@ -96,10 +92,7 @@ pub fn detect_changes_git(
 ///
 /// 在当前 HEAD 为给定版本创建轻量 Git 标签。
 /// 标签格式：`ucx-v{X.Y.Z}`。
-pub fn create_version_tag(
-    project_path: &Path,
-    version: &UcxVersion,
-) -> Result<(), VersionError> {
+pub fn create_version_tag(project_path: &Path, version: &UcxVersion) -> Result<(), VersionError> {
     let repo = Repository::open(project_path)?;
     let head = repo.head()?;
     let head_commit = head.peel_to_commit()?;
@@ -169,13 +162,9 @@ fn find_latest_ucx_tag(repo: &Repository) -> Result<(String, git2::Oid), Version
 ///
 /// 从类似 "ucx-v1.5.0" 的标签名解析版本。
 pub(crate) fn parse_tag_version(tag_name: &str) -> Result<UcxVersion, VersionError> {
-    let version_str = tag_name
-        .strip_prefix("ucx-v")
-        .ok_or_else(|| {
-            VersionError::InvalidVersion(format!(
-                "tag '{tag_name}' does not start with 'ucx-v'"
-            ))
-        })?;
+    let version_str = tag_name.strip_prefix("ucx-v").ok_or_else(|| {
+        VersionError::InvalidVersion(format!("tag '{tag_name}' does not start with 'ucx-v'"))
+    })?;
     UcxVersion::parse(version_str)
 }
 
@@ -224,7 +213,9 @@ fn diff_trees(
                     // Treat renames as a delete + add pair.
                     // 将重命名视为删除 + 新增对。
                     if let Some(old_path) = delta.old_file().path() {
-                        changes.deleted.push(old_path.to_string_lossy().replace('\\', "/"));
+                        changes
+                            .deleted
+                            .push(old_path.to_string_lossy().replace('\\', "/"));
                     }
                     changes.added.push(path);
                 }

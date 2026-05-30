@@ -198,9 +198,23 @@ impl Manifest {
         let mut hash_algorithm = None;
         let mut entries = Vec::new();
 
+        // Normalize CRLF -> LF first. docs/05-signature-spec.md specifies the
+        // MANIFEST uses `\r\n` line endings, so a spec-conformant manifest (e.g.
+        // produced by another SDK or on Windows) would otherwise have NO `\n\n`
+        // blank-line separators — `split("\n\n")` would collapse it into a single
+        // section and SILENTLY DROP every per-file entry, turning a tampered/
+        // incomplete archive into a "zero-entry → vacuously valid" manifest.
+        // Normalizing makes the blank-line split work for both `\n\n` and `\r\n\r\n`.
+        // 先将 CRLF 规范化为 LF。docs/05 规定 MANIFEST 用 `\r\n` 行结束符，
+        // 因此符合规范的清单（其他 SDK 或 Windows 产出）本不含 `\n\n` 空行分隔，
+        // `split("\n\n")` 会把它坍缩为单一段并**静默丢弃**所有 per-file 条目，
+        // 使被篡改/不完整的归档变成"零条目→真空通过"。规范化后空行分割对
+        // `\n\n` 与 `\r\n\r\n` 均生效。
+        let normalized = text.replace("\r\n", "\n");
+
         // Split into sections by blank lines.
         // 按空行分割为段落。
-        let sections: Vec<&str> = text.split("\n\n").collect();
+        let sections: Vec<&str> = normalized.split("\n\n").collect();
 
         if sections.is_empty() {
             return Err(ManifestError::EmptyManifest);
@@ -228,8 +242,8 @@ impl Manifest {
 
         let manifest_version = manifest_version
             .ok_or_else(|| ManifestError::MissingField("Manifest-Version".to_string()))?;
-        let ucx_version = ucx_version
-            .ok_or_else(|| ManifestError::MissingField("UCX-Version".to_string()))?;
+        let ucx_version =
+            ucx_version.ok_or_else(|| ManifestError::MissingField("UCX-Version".to_string()))?;
         let hash_algorithm = hash_algorithm
             .ok_or_else(|| ManifestError::MissingField("Hash-Algorithm".to_string()))?;
 
@@ -256,9 +270,10 @@ impl Manifest {
                     match key {
                         "Name" => name = Some(value.to_string()),
                         "Size" => {
-                            size = Some(value.parse::<u64>().map_err(|e| {
-                                ManifestError::InvalidField(format!("Size: {e}"))
-                            })?);
+                            size =
+                                Some(value.parse::<u64>().map_err(|e| {
+                                    ManifestError::InvalidField(format!("Size: {e}"))
+                                })?);
                         }
                         "Encrypted" => {
                             // Parse boolean "true"/"false".
@@ -416,8 +431,14 @@ mod tests {
     fn test_hash_algorithm_from_str() {
         // Valid strings should parse correctly.
         // 有效字符串应正确解析。
-        assert_eq!(HashAlgorithm::from_str("BLAKE3").unwrap(), HashAlgorithm::Blake3);
-        assert_eq!(HashAlgorithm::from_str("SHA256").unwrap(), HashAlgorithm::Sha256);
+        assert_eq!(
+            HashAlgorithm::from_str("BLAKE3").unwrap(),
+            HashAlgorithm::Blake3
+        );
+        assert_eq!(
+            HashAlgorithm::from_str("SHA256").unwrap(),
+            HashAlgorithm::Sha256
+        );
         assert!(HashAlgorithm::from_str("MD5").is_err());
     }
 
@@ -516,11 +537,7 @@ mod tests {
     fn test_manifest_entry_from_bytes() {
         // ManifestEntry::new should Base64-encode the hash bytes.
         // ManifestEntry::new 应将哈希字节编码为 Base64。
-        let entry = ManifestEntry::new(
-            "test.txt".to_string(),
-            100,
-            &[0xab, 0xcd, 0xef, 0x01],
-        );
+        let entry = ManifestEntry::new("test.txt".to_string(), 100, &[0xab, 0xcd, 0xef, 0x01]);
         // Base64 of [0xab, 0xcd, 0xef, 0x01] = "q83vAQ=="
         assert_eq!(entry.digest, "q83vAQ==");
     }
@@ -623,5 +640,33 @@ mod tests {
         assert_eq!(parsed.entries[0].size, 8192);
         assert_eq!(parsed.entries[0].encrypted, Some(true));
         assert_eq!(parsed.entries[0].original_size, Some(6144));
+    }
+
+    /// Security/robustness regression (H-types): a CRLF (`\r\n`) manifest — the
+    /// line ending docs/05 mandates — must parse its entries, not silently drop
+    /// them. Before the fix `split("\n\n")` found no blank-line separator in a
+    /// CRLF manifest and collapsed it to a single section, losing every entry.
+    ///
+    /// 安全/鲁棒性回归（H-types）：CRLF(`\r\n`) 清单（docs/05 规定的行结束符）
+    /// 必须解析出其条目，而非静默丢弃。修复前 `split("\n\n")` 在 CRLF 清单中找不到
+    /// 空行分隔，把它坍缩为单一段，丢失所有条目。
+    #[test]
+    fn test_from_manifest_str_handles_crlf() {
+        let crlf = "Manifest-Version: 1.0\r\n\
+                    UCX-Version: 1.0\r\n\
+                    Hash-Algorithm: BLAKE3\r\n\
+                    \r\n\
+                    Name: content/chapter-001.md\r\n\
+                    Size: 42\r\n\
+                    BLAKE3-Digest: AAAAdigestBBBB\r\n";
+        let m = Manifest::from_manifest_str(crlf).expect("CRLF manifest should parse");
+        assert_eq!(
+            m.entries.len(),
+            1,
+            "CRLF manifest must NOT silently drop entries"
+        );
+        assert_eq!(m.entries[0].name, "content/chapter-001.md");
+        assert_eq!(m.entries[0].size, 42);
+        assert_eq!(m.entries[0].digest, "AAAAdigestBBBB");
     }
 }

@@ -505,7 +505,10 @@ mod tests {
                 isbn: Some("978-3-16-148410-0".to_string()),
                 issn: None,
                 doi: None,
-                custom: Some(HashMap::from([("platform_id".to_string(), "qidian-123456".to_string())])),
+                custom: Some(HashMap::from([(
+                    "platform_id".to_string(),
+                    "qidian-123456".to_string(),
+                )])),
             },
             title: Title {
                 main: "作品主标题".to_string(),

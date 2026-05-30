@@ -209,9 +209,10 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     // 步骤 1.5：校验 `[project].version` 格式（ROB-4）。
     // 拒绝形如 `v1`、空串、`-1.0.0`、`1.0.0.0`、`1.0.0-` 的版本。
     // -------------------------------------------------------------------------
-    config.project.validate_version().map_err(|e| {
-        BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}"))
-    })?;
+    config
+        .project
+        .validate_version()
+        .map_err(|e| BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}")))?;
 
     // -------------------------------------------------------------------------
     // Step 2: Convert ProjectConfig → Codex (TOML → codex.json).
@@ -219,6 +220,28 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     // -------------------------------------------------------------------------
     let codex = convert::config_to_codex(&config);
     info!("Converted config to codex / 已转换配置为 codex");
+
+    // Step 2.1: Enforce the spec-required metadata fields that `ucx check` also
+    // checks (sdk/UCX-FORMAT.md §4.1: non-empty `title.main`, `creators` ≥ 1).
+    // Previously build() skipped these, so a project with an empty title or zero
+    // creators would still produce a spec-violating codex.json while `ucx check`
+    // reported failure — an inconsistency that undermines the 'verifiable'
+    // guarantee. Reject at build time so a spec-invalid project cannot be packed.
+    // 步骤 2.1：强制 `ucx check` 同样校验的规范必填元数据字段
+    //（sdk/UCX-FORMAT.md §4.1：`title.main` 非空、`creators` ≥ 1）。此前 build()
+    // 跳过这些校验，导致空标题或零创作者的项目仍会产出违反规范的 codex.json，而
+    // `ucx check` 却报失败——这种不一致削弱了"可验证"保证。构建时拒绝，使规范无效
+    // 的项目无法被打包。
+    if codex.title.main.trim().is_empty() {
+        return Err(BuildError::InvalidStructure(
+            "codex title.main must not be empty / codex 的 title.main 不得为空".to_string(),
+        ));
+    }
+    if codex.creators.is_empty() {
+        return Err(BuildError::InvalidStructure(
+            "codex must have at least one creator / codex 至少需要一个 creator".to_string(),
+        ));
+    }
 
     // -------------------------------------------------------------------------
     // Step 2.5: Resolve file version (from .ucx-version.json or auto).
@@ -243,28 +266,12 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
         ));
     }
 
-    // M-3: bound struct.json size BEFORE reading it entirely into memory, to
-    // prevent a parse-amplification DoS — a multi-MB / multi-million-node file can
-    // expand to hundreds of MB of parsed structures (an audited 76 MB / 2M-node
-    // input consumed ~589 MB RAM). A legitimate novel's struct.json is KB-scale;
-    // 16 MiB is a very generous ceiling.
-    // M-3：在整体读入内存**之前**限制 struct.json 大小，防止解析放大 DoS——
-    // 数 MB / 数百万节点的文件可膨胀为数百 MB 的解析结构（审计中 76 MB / 2M 节点
-    // 输入占用约 589 MB 内存）。合法小说的 struct.json 仅 KB 级；16 MiB 已是非常
-    // 宽松的上限。
-    let struct_meta = fs::metadata(&struct_path)?;
-    if struct_meta.len() > MAX_STRUCT_JSON_BYTES {
-        return Err(BuildError::InvalidStructure(format!(
-            "content/struct.json is too large ({} bytes; limit {MAX_STRUCT_JSON_BYTES}) / \
-             content/struct.json 过大（{} 字节；上限 {MAX_STRUCT_JSON_BYTES}）",
-            struct_meta.len(),
-            struct_meta.len()
-        )));
-    }
-
-    let struct_content = fs::read_to_string(&struct_path)?;
-    let structure: ucx_types::Structure = serde_json::from_str(&struct_content)
-        .map_err(|e| BuildError::ConfigParse(format!("struct.json parse error: {e}")))?;
+    // M-3: read with the shared size + node/depth DoS bounds (see
+    // read_and_validate_struct), the single ingestion path also used by
+    // dry_run() and check().
+    // M-3：用共享的大小 + 节点/深度 DoS 上界读取（见 read_and_validate_struct），
+    // 这是 dry_run() 与 check() 同样使用的唯一摄入路径。
+    let structure = read_and_validate_struct(&struct_path)?;
 
     info!(
         path = %struct_path.display(),
@@ -275,11 +282,6 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     // Step 3.5: Validate struct.json constraints.
     // 步骤 3.5：校验 struct.json 约束条件。
     // -------------------------------------------------------------------------
-    // M-3: bound the total node count and nesting depth so a maliciously broad or
-    // deep tree cannot exhaust memory/stack downstream.
-    // M-3：限制节点总数与嵌套深度，使恶意的超宽或超深树无法在后续耗尽内存/栈。
-    enforce_structure_limits(&structure.structure)?;
-
     // P-005: Validate that `file` and `children` are mutually exclusive.
     // P-005：校验 `file` 和 `children` 互斥。
     validate_structure_nodes(&structure.structure)?;
@@ -334,7 +336,13 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
     // 步骤 6：创建 UCX ZIP 归档。
     // -------------------------------------------------------------------------
     let ucx_version = &config.project.version;
-    archive::create_ucx_archive(&output_path, &codex, &structure, &collected_files, ucx_version)?;
+    archive::create_ucx_archive(
+        &output_path,
+        &codex,
+        &structure,
+        &collected_files,
+        ucx_version,
+    )?;
 
     info!(
         path = %output_path.display(),
@@ -362,14 +370,15 @@ pub fn build(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, Bui
 /// 解析预期的构建输出文件路径，但不实际执行构建。
 /// 读取 `unicodex.toml` 以确定输出目录和文件名，然后返回完整路径。
 /// 由 CLI 用于检查已存在的文件。
-pub fn resolve_output_path(project_path: &Path, options: &BuildOptions) -> Result<PathBuf, BuildError> {
+pub fn resolve_output_path(
+    project_path: &Path,
+    options: &BuildOptions,
+) -> Result<PathBuf, BuildError> {
     let config_path = project_path.join("unicodex.toml");
-    let config_str = fs::read_to_string(&config_path).map_err(|_| {
-        BuildError::ConfigNotFound(config_path.display().to_string())
-    })?;
-    let config: ucx_types::ProjectConfig = toml::from_str(&config_str).map_err(|e| {
-        BuildError::ConfigParse(e.to_string())
-    })?;
+    let config_str = fs::read_to_string(&config_path)
+        .map_err(|_| BuildError::ConfigNotFound(config_path.display().to_string()))?;
+    let config: ucx_types::ProjectConfig =
+        toml::from_str(&config_str).map_err(|e| BuildError::ConfigParse(e.to_string()))?;
     let output_dir = resolve_output_dir(project_path, &config, options);
     let output_name = resolve_output_name(project_path, &config, options);
     Ok(output_dir.join(format!("{output_name}.ucx")))
@@ -398,9 +407,10 @@ pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResu
 
     // Validate `[project].version` format (ROB-4).
     // 校验 `[project].version` 格式（ROB-4）。
-    config.project.validate_version().map_err(|e| {
-        BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}"))
-    })?;
+    config
+        .project
+        .validate_version()
+        .map_err(|e| BuildError::ConfigParse(format!("unicodex.toml [project].version: {e}")))?;
 
     // Step 2: Convert config (to validate metadata).
     // 步骤 2：转换配置（以校验元数据）。
@@ -414,9 +424,9 @@ pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResu
             "content/struct.json not found — this file is required for building".to_string(),
         ));
     }
-    let struct_content = fs::read_to_string(&struct_path)?;
-    let structure: ucx_types::Structure = serde_json::from_str(&struct_content)
-        .map_err(|e| BuildError::ConfigParse(format!("struct.json parse error: {e}")))?;
+    // M-3: shared size + node/depth DoS bounds (same path as build()/check()).
+    // M-3：共享的大小 + 节点/深度 DoS 上界（与 build()/check() 同一路径）。
+    let structure = read_and_validate_struct(&struct_path)?;
 
     validate_structure_nodes(&structure.structure)?;
     validate_file_references(&structure.structure, &project_path.join("content"))?;
@@ -428,9 +438,7 @@ pub fn dry_run(project_path: &Path, options: &BuildOptions) -> Result<DryRunResu
     let mut total_size: u64 = 0;
 
     for cf in &collected_files {
-        let size = fs::metadata(&cf.disk_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = fs::metadata(&cf.disk_path).map(|m| m.len()).unwrap_or(0);
         total_size += size;
         files.push(DryRunFile {
             archive_path: cf.archive_path.clone(),
@@ -641,8 +649,14 @@ pub fn check(project_path: &Path) -> Result<CheckResult, BuildError> {
         return Ok(CheckResult { items });
     }
 
-    let struct_content = fs::read_to_string(&struct_path)?;
-    let structure = match serde_json::from_str::<ucx_types::Structure>(&struct_content) {
+    // M-3: read with the shared size + node/depth DoS bounds (same path as
+    // build()/dry_run()), reporting any violation as a failed check item rather
+    // than bailing — so `ucx check` on an untrusted project can no longer be used
+    // to trigger the parse-amplification DoS.
+    // M-3：用共享的大小 + 节点/深度 DoS 上界读取（与 build()/dry_run() 同一路径），
+    // 任何越界作为失败检查项报告而非中止——使对不可信项目的 `ucx check` 不再能触发
+    // 解析放大 DoS。
+    let structure = match read_and_validate_struct(&struct_path) {
         Ok(s) => {
             items.push(CheckItem {
                 name: "content/struct.json".to_string(),
@@ -655,7 +669,7 @@ pub fn check(project_path: &Path) -> Result<CheckResult, BuildError> {
             items.push(CheckItem {
                 name: "content/struct.json".to_string(),
                 passed: false,
-                message: format!("parse error: {e}"),
+                message: format!("{e}"),
             });
             return Ok(CheckResult { items });
         }
@@ -777,10 +791,7 @@ fn collect_duplicate_file_refs(nodes: &[ucx_types::StructureNode]) -> Vec<(Strin
     }
     walk(nodes, &mut counts);
 
-    counts
-        .into_iter()
-        .filter(|(_, c)| *c > 1)
-        .collect()
+    counts.into_iter().filter(|(_, c)| *c > 1).collect()
 }
 
 // =============================================================================
@@ -908,58 +919,45 @@ fn validate_structure_nodes(nodes: &[ucx_types::StructureNode]) -> Result<(), Bu
     Ok(())
 }
 
-/// Maximum accepted byte size of `content/struct.json` (M-3 DoS guard).
-/// 16 MiB — orders of magnitude above any legitimate novel structure.
-/// `content/struct.json` 接受的最大字节大小（M-3 DoS 防护）。16 MiB。
-const MAX_STRUCT_JSON_BYTES: u64 = 16 * 1024 * 1024;
-
-/// Maximum total number of nodes in `struct.json` (M-3 DoS guard).
-/// `struct.json` 节点总数上限（M-3 DoS 防护）。
-const MAX_STRUCT_NODES: usize = 100_000;
-
-/// Maximum nesting depth of `struct.json` (M-3 DoS guard).
-/// `struct.json` 嵌套深度上限（M-3 DoS 防护）。
-const MAX_STRUCT_DEPTH: usize = 64;
-
-/// Enforce node-count and nesting-depth limits on a parsed struct.json tree.
+/// Read, size-bound, parse, and limit-check `content/struct.json`.
 ///
-/// Uses an iterative depth-first traversal with an explicit stack (rather than
-/// native recursion) so that counting a maliciously deep tree cannot itself
-/// overflow the stack. Bounds both the total number of nodes (breadth) and the
-/// maximum nesting depth.
+/// This is the **single** struct.json ingestion path so that the M-3
+/// parse-amplification DoS bounds (byte-size cap + node-count/depth caps, both
+/// defined once in `ucx-types::structure`) are enforced uniformly on EVERY
+/// untrusted-input entry point — `build()`, `dry_run()`, and `check()`. The
+/// previous code applied these bounds only in `build()`, leaving `dry_run` and
+/// `check` (both CLI-reachable on an untrusted project directory) exploitable.
 ///
-/// 对已解析的 struct.json 树强制节点数与嵌套深度上限。
-/// 使用带显式栈的迭代式深度优先遍历（而非原生递归），使统计恶意超深树时
-/// 自身不会栈溢出。同时限制节点总数（宽度）与最大嵌套深度。
-fn enforce_structure_limits(nodes: &[ucx_types::StructureNode]) -> Result<(), BuildError> {
-    // Stack of (node, depth). Depth is 1-based for top-level nodes.
-    // (节点, 深度) 栈。顶层节点深度从 1 起。
-    let mut stack: Vec<(&ucx_types::StructureNode, usize)> =
-        nodes.iter().map(|n| (n, 1usize)).collect();
-    let mut count = 0usize;
-
-    while let Some((node, depth)) = stack.pop() {
-        count += 1;
-        if count > MAX_STRUCT_NODES {
-            return Err(BuildError::InvalidStructure(format!(
-                "struct.json exceeds the maximum of {MAX_STRUCT_NODES} nodes / \
-                 struct.json 节点数超过上限 {MAX_STRUCT_NODES}"
-            )));
-        }
-        if depth > MAX_STRUCT_DEPTH {
-            return Err(BuildError::InvalidStructure(format!(
-                "struct.json nesting exceeds the maximum depth of {MAX_STRUCT_DEPTH} / \
-                 struct.json 嵌套深度超过上限 {MAX_STRUCT_DEPTH}"
-            )));
-        }
-        if let Some(ref children) = node.children {
-            for child in children {
-                stack.push((child, depth + 1));
-            }
-        }
+/// 读取、限制大小、解析并校验上界的 `content/struct.json`。
+/// 这是 struct.json 的**唯一**摄入路径，使 M-3 解析放大 DoS 上界（字节大小上限
+/// + 节点数/深度上限，均在 `ucx-types::structure` 一处定义）在**每个**不可信输入
+/// 入口——`build()`、`dry_run()`、`check()`——统一强制。旧代码仅在 `build()` 施加，
+/// 留下同样可经 CLI 触达不可信项目目录的 `dry_run` 与 `check` 可被利用。
+fn read_and_validate_struct(struct_path: &Path) -> Result<ucx_types::Structure, BuildError> {
+    // Bound size BEFORE reading the whole file into memory.
+    // 在整体读入内存**之前**限制大小。
+    let meta = fs::metadata(struct_path)?;
+    if meta.len() > ucx_types::structure::MAX_STRUCT_JSON_BYTES {
+        return Err(BuildError::InvalidStructure(format!(
+            "content/struct.json is too large ({} bytes; limit {}) / \
+             content/struct.json 过大（{} 字节；上限 {}）",
+            meta.len(),
+            ucx_types::structure::MAX_STRUCT_JSON_BYTES,
+            meta.len(),
+            ucx_types::structure::MAX_STRUCT_JSON_BYTES
+        )));
     }
 
-    Ok(())
+    let content = fs::read_to_string(struct_path)?;
+    let structure: ucx_types::Structure = serde_json::from_str(&content)
+        .map_err(|e| BuildError::ConfigParse(format!("struct.json parse error: {e}")))?;
+
+    // Bound node count + nesting depth (shared guard).
+    // 限制节点数 + 嵌套深度（共享守卫）。
+    ucx_types::structure::enforce_structure_limits(&structure.structure)
+        .map_err(|e| BuildError::InvalidStructure(e.to_string()))?;
+
+    Ok(structure)
 }
 
 /// Validate that a `file` reference in `struct.json` is a safe relative path.
@@ -1111,7 +1109,9 @@ fn resolve_file_version(
         match ucx_version::detect_changes(project_path) {
             Ok((current, changes)) => {
                 if changes.is_empty() {
-                    info!("No content changes detected, skipping version bump / 未检测到内容变更，跳过版本升级");
+                    info!(
+                        "No content changes detected, skipping version bump / 未检测到内容变更，跳过版本升级"
+                    );
                     // Still load existing version state if available.
                     // 如果可用，仍加载现有版本状态。
                     return load_version_state_file(project_path);
@@ -1121,10 +1121,7 @@ fn resolve_file_version(
                     Ok(next) => {
                         info!("Auto version: {current} → {next}");
                         let prev = load_version_state_file(project_path);
-                        let prev_revision = prev
-                            .as_ref()
-                            .and_then(|fv| fv.revision)
-                            .unwrap_or(0);
+                        let prev_revision = prev.as_ref().and_then(|fv| fv.revision).unwrap_or(0);
                         let fv = ucx_types::FileVersion {
                             version: Some(next.to_string()),
                             revision: Some(prev_revision + 1),
@@ -1174,8 +1171,7 @@ fn save_version_state_file(
     fv: &ucx_types::FileVersion,
 ) -> Result<(), std::io::Error> {
     let path = project_path.join(VERSION_STATE_FILE);
-    let json = serde_json::to_string_pretty(fv)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(fv).map_err(std::io::Error::other)?;
     fs::write(&path, json)
 }
 
@@ -1470,14 +1466,13 @@ language = "zh-CN"
     }]
 }"#;
         fs::write(project_dir.join("content/struct.json"), struct_json).unwrap();
-        fs::write(
-            project_dir.join("content/chapter-001.md"),
-            "# Test\n",
-        )
-        .unwrap();
+        fs::write(project_dir.join("content/chapter-001.md"), "# Test\n").unwrap();
 
         let result = build(&project_dir, &BuildOptions::default());
-        assert!(result.is_err(), "should reject struct with both file and children");
+        assert!(
+            result.is_err(),
+            "should reject struct with both file and children"
+        );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("mutually exclusive"),
@@ -1520,11 +1515,7 @@ language = "zh-CN"
     ]
 }"#;
         fs::write(project_dir.join("content/struct.json"), struct_json).unwrap();
-        fs::write(
-            project_dir.join("content/chapter-001.md"),
-            "# 第一章\n",
-        )
-        .unwrap();
+        fs::write(project_dir.join("content/chapter-001.md"), "# 第一章\n").unwrap();
         // NOTE: content/nonexistent.md is intentionally NOT created.
         // 注意：content/nonexistent.md 故意不创建。
 
@@ -1727,12 +1718,15 @@ language = "zh-CN"
     /// 安全回归（M-3）：超过节点数上限的 struct.json 树被拒绝，防止解析放大 DoS。
     #[test]
     fn test_enforce_structure_limits_rejects_too_many_nodes() {
+        use ucx_types::structure::{
+            MAX_STRUCT_NODES, StructureLimitError, enforce_structure_limits,
+        };
         let many: Vec<ucx_types::StructureNode> = (0..(MAX_STRUCT_NODES + 1))
             .map(|i| mk_node(&format!("n{i}"), Some(format!("c{i}.md")), None))
             .collect();
         let err = enforce_structure_limits(&many).unwrap_err();
         assert!(
-            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("nodes")),
+            matches!(err, StructureLimitError::TooManyNodes(_)),
             "expected node-count rejection, got: {err:?}"
         );
     }
@@ -1743,6 +1737,9 @@ language = "zh-CN"
     /// 安全回归（M-3）：超过深度上限的 struct.json 树被拒绝（且计数器自身不栈溢出）。
     #[test]
     fn test_enforce_structure_limits_rejects_too_deep() {
+        use ucx_types::structure::{
+            MAX_STRUCT_DEPTH, StructureLimitError, enforce_structure_limits,
+        };
         // Build a chain MAX_STRUCT_DEPTH + 5 levels deep.
         // 构造比上限深 5 层的链。
         let mut node = mk_node("leaf", Some("c.md".to_string()), None);
@@ -1751,7 +1748,7 @@ language = "zh-CN"
         }
         let err = enforce_structure_limits(&[node]).unwrap_err();
         assert!(
-            matches!(err, BuildError::InvalidStructure(ref m) if m.contains("depth")),
+            matches!(err, StructureLimitError::TooDeep(_)),
             "expected depth rejection, got: {err:?}"
         );
     }
@@ -1771,6 +1768,6 @@ language = "zh-CN"
             ),
             mk_node("Epilogue", Some("epilogue.md".to_string()), None),
         ];
-        assert!(enforce_structure_limits(&nodes).is_ok());
+        assert!(ucx_types::structure::enforce_structure_limits(&nodes).is_ok());
     }
 }

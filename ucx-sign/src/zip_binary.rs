@@ -85,8 +85,7 @@ pub fn find_eocd(data: &[u8]) -> Result<usize, SignError> {
             // Verify: the comment length field at offset+20 must be consistent
             // with the remaining data after the EOCD header.
             // 验证：偏移 +20 处的注释长度字段必须与 EOCD 头部之后的剩余数据一致。
-            let comment_len =
-                u16::from_le_bytes([data[offset + 20], data[offset + 21]]) as usize;
+            let comment_len = u16::from_le_bytes([data[offset + 20], data[offset + 21]]) as usize;
             if offset + EOCD_MIN_SIZE + comment_len == data.len() {
                 return Ok(offset);
             }
@@ -223,10 +222,7 @@ pub fn get_cd_size(data: &[u8], eocd_offset: usize) -> Result<u32, SignError> {
 /// 在以下情况返回 `SignError::SigningFailed`：
 /// - 未找到 EOCD
 /// - CD 偏移无效
-pub fn insert_signing_block(
-    zip_data: &[u8],
-    signing_block: &[u8],
-) -> Result<Vec<u8>, SignError> {
+pub fn insert_signing_block(zip_data: &[u8], signing_block: &[u8]) -> Result<Vec<u8>, SignError> {
     // Step 1: Find EOCD and get the CD offset.
     // 步骤 1：查找 EOCD 并获取 CD 偏移。
     let eocd_offset = find_eocd(zip_data)?;
@@ -299,6 +295,27 @@ pub fn find_signing_block(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, SignE
     let eocd_offset = find_eocd(data)?;
     let cd_offset = get_cd_offset(data, eocd_offset)? as usize;
 
+    // Security: `cd_offset` comes from a u32 in the EOCD record and is fully
+    // attacker-controlled. `find_eocd` only checks the EOCD's own self-consistency,
+    // NOT that `cd_offset <= data.len()`. Without this bound, the slice
+    // `data[magic_start..cd_offset]` below panics (OOB) on a crafted archive whose
+    // EOCD cd_offset field is e.g. 0xFFFFFFF0 — violating this function's
+    // documented "return Err on invalid ZIP" contract (it must never panic on
+    // untrusted input). The sibling `insert_signing_block` already guards this;
+    // this extraction path must too.
+    // 安全：`cd_offset` 来自 EOCD 记录中的 u32，完全攻击者可控。`find_eocd` 只校验
+    // EOCD 自身的自洽性，**不**校验 `cd_offset <= data.len()`。缺此上界时，下方切片
+    // `data[magic_start..cd_offset]` 会在 EOCD 的 cd_offset 字段被构造为如
+    // 0xFFFFFFF0 的归档上越界 panic——违反本函数"无效 ZIP 返回 Err"的契约
+    //（绝不能在不可信输入上 panic）。姊妹函数 `insert_signing_block` 已有此守卫，
+    // 此提取路径也必须有。
+    if cd_offset > data.len() {
+        return Err(SignError::SigningFailed(format!(
+            "Central Directory offset ({cd_offset}) exceeds file size ({})",
+            data.len()
+        )));
+    }
+
     // Step 2: Check if there is a magic marker just before the CD.
     // 步骤 2：检查 CD 之前是否有 magic 标记。
     //
@@ -345,13 +362,25 @@ pub fn find_signing_block(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, SignE
     //   [size_of_block: u64][pairs...][size_of_block: u64][magic: 16]
     //   其中 size_of_block = pairs 长度 + 8(尾部大小) + 16(magic)。
     //   所以 block_start = cd_offset - 8 - block_size。
-    if cd_offset < 8 + block_size {
+    //
+    // Security: `block_size` is an attacker-controlled u64. Use checked
+    // arithmetic — `8 + block_size` would panic on overflow in debug builds and
+    // silently wrap in release (defeating the bound check and leading to an OOB
+    // slice later). This is the same integer-overflow-on-untrusted-length class
+    // as the chunked-decrypt hardening.
+    // 安全：`block_size` 是攻击者可控的 u64。使用 checked 算术——`8 + block_size`
+    // 在 debug 下溢出会 panic、release 下会静默回绕（使边界检查失效并导致后续越界
+    // 切片）。这与分块解密加固属同一"不可信长度整数溢出"类别。
+    let block_total = block_size.checked_add(8).ok_or_else(|| {
+        SignError::SigningFailed("signing block size_of_block overflows usize".to_string())
+    })?;
+    if cd_offset < block_total {
         return Err(SignError::SigningFailed(
             "signing block size exceeds available data before Central Directory".to_string(),
         ));
     }
 
-    let block_start = cd_offset - 8 - block_size;
+    let block_start = cd_offset - block_total;
 
     // Step 5: Read head size_of_block and verify it matches the tail value.
     // 步骤 5：读取头部 size_of_block 并验证与尾部一致。
@@ -361,7 +390,10 @@ pub fn find_signing_block(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, SignE
     // 签名块的前 8 个字节是开头的 size_of_block。
     // 对于格式正确的块，它必须与尾部的 size_of_block 相等。
     let head_offset = block_start;
-    if head_offset + 8 > data.len() {
+    if head_offset
+        .checked_add(8)
+        .is_none_or(|end| end > data.len())
+    {
         return Err(SignError::SigningFailed(
             "signing block too small for head size_of_block".to_string(),
         ));
@@ -438,8 +470,8 @@ mod tests {
 
         // CD offset should be valid (less than EOCD offset).
         // CD 偏移应有效（小于 EOCD 偏移）。
-        let cd_offset = get_cd_offset(&zip_data, eocd_offset)
-            .expect("get_cd_offset should succeed");
+        let cd_offset =
+            get_cd_offset(&zip_data, eocd_offset).expect("get_cd_offset should succeed");
         assert!(
             (cd_offset as usize) <= eocd_offset,
             "CD offset must be <= EOCD offset"
@@ -472,8 +504,8 @@ mod tests {
         // The zip crate should still be able to read the archive.
         // zip crate 应仍能读取该归档。
         let cursor = std::io::Cursor::new(&signed_data);
-        let mut archive = zip::ZipArchive::new(cursor)
-            .expect("signed ZIP must be readable by zip crate");
+        let mut archive =
+            zip::ZipArchive::new(cursor).expect("signed ZIP must be readable by zip crate");
 
         // The original file should still be accessible.
         // 原始文件应仍可访问。
@@ -504,9 +536,11 @@ mod tests {
 
         // Find the signing block.
         // 查找签名块。
-        let result = find_signing_block(&signed_data)
-            .expect("find_signing_block should not error");
-        assert!(result.is_some(), "signing block must be found in signed data");
+        let result = find_signing_block(&signed_data).expect("find_signing_block should not error");
+        assert!(
+            result.is_some(),
+            "signing block must be found in signed data"
+        );
 
         let (found_block, _block_offset) = result.unwrap();
 
@@ -529,6 +563,60 @@ mod tests {
         assert!(
             result.is_none(),
             "unsigned ZIP must not contain a signing block"
+        );
+    }
+
+    /// Security regression (sign OOB): a crafted archive whose EOCD declares a
+    /// Central Directory offset far beyond the file must return Err, NOT panic on
+    /// an out-of-bounds slice. `cd_offset` is an attacker-controlled u32.
+    ///
+    /// 安全回归（签名越界）：EOCD 声明的中央目录偏移远超文件大小的构造归档，必须
+    /// 返回 Err，而**非**在越界切片上 panic。`cd_offset` 是攻击者可控的 u32。
+    #[test]
+    fn test_find_signing_block_rejects_oob_cd_offset_without_panic() {
+        // Minimal 22-byte EOCD: signature + zeroed fields + comment_len=0, with
+        // the cd_offset field (bytes 16..20) set far beyond the 22-byte file.
+        // 最小 22 字节 EOCD：签名 + 置零字段 + comment_len=0，cd_offset 字段
+        //（字节 16..20）设为远超 22 字节文件的值。
+        let mut data = vec![0u8; 22];
+        data[0..4].copy_from_slice(&[0x50, 0x4B, 0x05, 0x06]); // EOCD signature
+        data[16..20].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes()); // huge cd_offset
+        // bytes 20..22 (comment length) stay 0.
+
+        let result = find_signing_block(&data);
+        assert!(
+            result.is_err(),
+            "out-of-bounds cd_offset must return Err (no panic), got: {result:?}"
+        );
+    }
+
+    /// Security regression (sign overflow): a signing-block size_of_block of
+    /// u64::MAX must not overflow `8 + block_size` (panic in debug / wrap in
+    /// release) — it must be rejected with Err via checked arithmetic.
+    ///
+    /// 安全回归（签名溢出）：size_of_block 为 u64::MAX 时，`8 + block_size` 不得溢出
+    ///（debug panic / release 回绕），必须经 checked 算术以 Err 拒绝。
+    #[test]
+    fn test_find_signing_block_rejects_overflow_block_size_without_panic() {
+        // Layout just before the CD: [size_of_block u64][16-byte magic][CD...].
+        // Place a valid magic right before the CD and a u64::MAX size_of_block
+        // before it, with a 22-byte EOCD pointing the CD at that offset.
+        // CD 前布局：[size_of_block u64][16 字节 magic][CD...]。在 CD 前放合法 magic、
+        // 其前放 u64::MAX 的 size_of_block，并用 22 字节 EOCD 把 CD 指向该偏移。
+        let mut data = Vec::new();
+        data.extend_from_slice(&u64::MAX.to_le_bytes()); // tail size_of_block = MAX
+        data.extend_from_slice(UCX_SIGNING_BLOCK_MAGIC); // 16-byte magic
+        let cd_offset = data.len() as u32; // CD starts right after the magic
+        // EOCD (22 bytes) with cd_offset pointing at the magic's end.
+        let mut eocd = vec![0u8; 22];
+        eocd[0..4].copy_from_slice(&[0x50, 0x4B, 0x05, 0x06]);
+        eocd[16..20].copy_from_slice(&cd_offset.to_le_bytes());
+        data.extend_from_slice(&eocd);
+
+        let result = find_signing_block(&data);
+        assert!(
+            result.is_err(),
+            "u64::MAX size_of_block must return Err (no overflow panic), got: {result:?}"
         );
     }
 }

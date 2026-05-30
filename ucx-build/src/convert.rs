@@ -207,9 +207,9 @@ pub fn config_to_codex_with_version(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ucx_types::UcxId;
     use ucx_types::codex::Creator;
     use ucx_types::project::*;
-    use ucx_types::UcxId;
 
     /// Helper: create a minimal ProjectConfig for testing.
     /// 辅助函数：创建一个最小的 ProjectConfig 用于测试。

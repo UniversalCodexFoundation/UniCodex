@@ -182,9 +182,8 @@ pub fn sign(
     // -------------------------------------------------------------------------
     {
         let cursor = std::io::Cursor::new(&ucx_data);
-        let archive = zip::ZipArchive::new(cursor).map_err(|e| {
-            SignError::SigningFailed(format!("failed to read archive: {e}"))
-        })?;
+        let archive = zip::ZipArchive::new(cursor)
+            .map_err(|e| SignError::SigningFailed(format!("failed to read archive: {e}")))?;
         let sf_path = format!("META-INF/signatures/{signer_id}.SF");
         if archive.file_names().any(|name| name == sf_path) {
             return Err(SignError::SigningFailed(format!(
@@ -425,18 +424,16 @@ fn validate_signer_id(signer_id: &str) -> Result<(), SignError> {
 /// 从内存中的 ZIP 归档读取 MANIFEST.MF 内容。
 fn read_manifest_from_zip(zip_data: &[u8]) -> Result<Vec<u8>, SignError> {
     let cursor = std::io::Cursor::new(zip_data);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| {
-        SignError::SigningFailed(format!("failed to open UCX archive as ZIP: {e}"))
-    })?;
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| SignError::SigningFailed(format!("failed to open UCX archive as ZIP: {e}")))?;
 
     let mut manifest_entry = archive.by_name("META-INF/MANIFEST.MF").map_err(|e| {
         SignError::SigningFailed(format!("META-INF/MANIFEST.MF not found in archive: {e}"))
     })?;
 
     let mut content = Vec::with_capacity(manifest_entry.size() as usize);
-    std::io::Read::read_to_end(&mut manifest_entry, &mut content).map_err(|e| {
-        SignError::SigningFailed(format!("failed to read MANIFEST.MF: {e}"))
-    })?;
+    std::io::Read::read_to_end(&mut manifest_entry, &mut content)
+        .map_err(|e| SignError::SigningFailed(format!("failed to read MANIFEST.MF: {e}")))?;
 
     Ok(content)
 }
@@ -493,10 +490,7 @@ mod tests {
         // 特殊字符应被拒绝。
         for bad_id in &["AUTHOR@1", "MY-SIGNER", "A B", "", "A".repeat(33).as_str()] {
             let result = sign(&ucx_path, &key_path, &cert_path, bad_id);
-            assert!(
-                result.is_err(),
-                "signer_id '{bad_id}' should be rejected"
-            );
+            assert!(result.is_err(), "signer_id '{bad_id}' should be rejected");
         }
     }
 
@@ -574,8 +568,7 @@ mod tests {
 
         // Verify the CN matches what we provided.
         // 验证 CN 与我们提供的值一致。
-        let cn = cert::cert_subject_cn(&cert_der.unwrap())
-            .expect("CN extraction should succeed");
+        let cn = cert::cert_subject_cn(&cert_der.unwrap()).expect("CN extraction should succeed");
         assert_eq!(cn, "Test Signer CN", "CN must match the provided value");
     }
 
@@ -600,8 +593,8 @@ mod tests {
         // --- Step B: Build the UCX file ---
         // 步骤 B：构建 UCX 文件。
         let build_options = ucx_build::BuildOptions::default();
-        let ucx_path = ucx_build::build(&project_dir, &build_options)
-            .expect("build should succeed");
+        let ucx_path =
+            ucx_build::build(&project_dir, &build_options).expect("build should succeed");
         assert!(ucx_path.exists(), "built .ucx file should exist");
 
         // --- Step C: Generate key pair and certificate ---
@@ -609,13 +602,11 @@ mod tests {
         let key_path = tmp.path().join("signer.pem");
         let cert_path = tmp.path().join("signer.cert.pem");
         keygen(&key_path).expect("keygen should succeed");
-        create_cert(&key_path, "Test Signer", 365, &cert_path)
-            .expect("create_cert should succeed");
+        create_cert(&key_path, "Test Signer", 365, &cert_path).expect("create_cert should succeed");
 
         // --- Step D: Sign the UCX file ---
         // 步骤 D：签名 UCX 文件。
-        sign(&ucx_path, &key_path, &cert_path, "AUTHOR")
-            .expect("sign should succeed");
+        sign(&ucx_path, &key_path, &cert_path, "AUTHOR").expect("sign should succeed");
 
         // --- Step E: Verify the signed file can still be opened by ucx_parse ---
         // 步骤 E：验证签名后的文件仍可被 ucx_parse 打开。
@@ -628,7 +619,8 @@ mod tests {
 
         let archive = archive.unwrap();
         assert_eq!(
-            archive.codex().title.main, "签名测试",
+            archive.codex().title.main,
+            "签名测试",
             "codex title must be preserved after signing"
         );
 

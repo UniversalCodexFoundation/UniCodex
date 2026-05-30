@@ -11,9 +11,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tracing::debug;
-use zip::write::FileOptions;
 use zip::CompressionMethod;
 use zip::ZipWriter;
+use zip::write::FileOptions;
 
 use ucx_types::{Codex, HashAlgorithm, Manifest, ManifestEntry, Structure};
 
@@ -102,9 +102,7 @@ fn collect_dir_recursive(
     // Use walkdir for robust recursive traversal.
     // 使用 walkdir 进行可靠的递归遍历。
     for entry in walkdir::WalkDir::new(dir).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            BuildError::Io(std::io::Error::other(e.to_string()))
-        })?;
+        let entry = entry.map_err(|e| BuildError::Io(std::io::Error::other(e.to_string())))?;
 
         // Skip directories — only collect regular files.
         // 跳过目录 — 仅收集常规文件。
@@ -333,8 +331,11 @@ pub fn create_ucx_archive(
     // --- 生成 MANIFEST.MF。 ---
     let manifest = build_manifest(ucx_version, &manifest_input);
     let manifest_str = manifest.to_manifest_string();
-    debug!("Generated MANIFEST.MF with {} entries / 已生成包含 {} 个条目的 MANIFEST.MF",
-           manifest.entries.len(), manifest.entries.len());
+    debug!(
+        "Generated MANIFEST.MF with {} entries / 已生成包含 {} 个条目的 MANIFEST.MF",
+        manifest.entries.len(),
+        manifest.entries.len()
+    );
 
     // --- Create the ZIP file. ---
     // --- 创建 ZIP 文件。 ---
@@ -343,16 +344,16 @@ pub fn create_ucx_archive(
 
     // Entry 1: mimetype — STORED, no compression, no extra data.
     // 条目 1：mimetype — STORED，不压缩，无额外数据。
-    let options_stored: FileOptions<'_, ()> = FileOptions::default()
-        .compression_method(CompressionMethod::Stored);
+    let options_stored: FileOptions<'_, ()> =
+        FileOptions::default().compression_method(CompressionMethod::Stored);
     zip.start_file("mimetype", options_stored)
         .map_err(|e| BuildError::Zip(e.to_string()))?;
     zip.write_all(UCX_MIMETYPE)?;
 
     // Entry 2: META-INF/MANIFEST.MF — DEFLATE.
     // 条目 2：META-INF/MANIFEST.MF — DEFLATE。
-    let options_deflate: FileOptions<'_, ()> = FileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options_deflate: FileOptions<'_, ()> =
+        FileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("META-INF/MANIFEST.MF", options_deflate)
         .map_err(|e| BuildError::Zip(e.to_string()))?;
     zip.write_all(manifest_str.as_bytes())?;
@@ -459,24 +460,15 @@ mod tests {
             compression_method("config.toml"),
             CompressionMethod::Deflated
         );
-        assert_eq!(
-            compression_method("data.xml"),
-            CompressionMethod::Deflated
-        );
-        assert_eq!(
-            compression_method("page.html"),
-            CompressionMethod::Deflated
-        );
+        assert_eq!(compression_method("data.xml"), CompressionMethod::Deflated);
+        assert_eq!(compression_method("page.html"), CompressionMethod::Deflated);
     }
 
     /// Test: compression_method should return DEFLATE for unknown extensions.
     /// 测试：compression_method 对未知扩展名应返回 DEFLATE。
     #[test]
     fn test_compression_method_default() {
-        assert_eq!(
-            compression_method("data.xyz"),
-            CompressionMethod::Deflated
-        );
+        assert_eq!(compression_method("data.xyz"), CompressionMethod::Deflated);
         assert_eq!(
             compression_method("no_extension"),
             CompressionMethod::Deflated

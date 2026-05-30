@@ -78,9 +78,8 @@ impl Snapshot {
         }
 
         let content = std::fs::read_to_string(&snapshot_path)?;
-        let snapshot: Snapshot = serde_json::from_str(&content).map_err(|e| {
-            VersionError::Snapshot(format!("failed to parse {SNAPSHOT_FILE}: {e}"))
-        })?;
+        let snapshot: Snapshot = serde_json::from_str(&content)
+            .map_err(|e| VersionError::Snapshot(format!("failed to parse {SNAPSHOT_FILE}: {e}")))?;
         Ok(Some(snapshot))
     }
 
@@ -89,9 +88,8 @@ impl Snapshot {
     /// 将此快照保存到项目根目录的 `.ucx-snapshot.json`。
     pub fn save(&self, project_path: &Path) -> Result<(), VersionError> {
         let snapshot_path = project_path.join(SNAPSHOT_FILE);
-        let json = serde_json::to_string_pretty(self).map_err(|e| {
-            VersionError::Snapshot(format!("failed to serialize snapshot: {e}"))
-        })?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| VersionError::Snapshot(format!("failed to serialize snapshot: {e}")))?;
         std::fs::write(&snapshot_path, json)?;
         Ok(())
     }
@@ -207,8 +205,10 @@ mod tests {
         // 保存并加载快照应产生相同的结果。
         let dir = tempfile::tempdir().unwrap();
         let mut snap = Snapshot::empty("1.2.0");
-        snap.files.insert("content/ch-001.md".to_string(), "abc123".to_string());
-        snap.files.insert("content/ch-002.md".to_string(), "def456".to_string());
+        snap.files
+            .insert("content/ch-001.md".to_string(), "abc123".to_string());
+        snap.files
+            .insert("content/ch-002.md".to_string(), "def456".to_string());
 
         snap.save(dir.path()).unwrap();
         let loaded = Snapshot::load(dir.path()).unwrap().unwrap();
@@ -264,7 +264,9 @@ mod tests {
         // 当前快照中的新文件应被检测为新增。
         let old = Snapshot::empty("1.0.0");
         let mut current = Snapshot::empty("1.1.0");
-        current.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        current
+            .files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
 
         let changes = old.diff(&current);
         assert_eq!(changes.added, vec!["content/ch-001.md"]);
@@ -277,10 +279,13 @@ mod tests {
         // Files with different hashes should be detected as modified.
         // 哈希不同的文件应被检测为修改。
         let mut old = Snapshot::empty("1.0.0");
-        old.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        old.files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
 
         let mut current = Snapshot::empty("1.0.1");
-        current.files.insert("content/ch-001.md".to_string(), "bbb".to_string());
+        current
+            .files
+            .insert("content/ch-001.md".to_string(), "bbb".to_string());
 
         let changes = old.diff(&current);
         assert!(changes.added.is_empty());
@@ -293,7 +298,8 @@ mod tests {
         // Files missing from the current snapshot should be detected as deleted.
         // 当前快照中缺少的文件应被检测为删除。
         let mut old = Snapshot::empty("1.0.0");
-        old.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        old.files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
 
         let current = Snapshot::empty("1.0.0");
 
@@ -308,10 +314,13 @@ mod tests {
         // Identical snapshots should produce an empty changeset.
         // 相同的快照应产生空的变更集。
         let mut old = Snapshot::empty("1.0.0");
-        old.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        old.files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
 
         let mut current = Snapshot::empty("1.0.0");
-        current.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        current
+            .files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
 
         let changes = old.diff(&current);
         assert!(changes.is_empty());
@@ -322,18 +331,27 @@ mod tests {
         // A mix of additions, modifications, and deletions.
         // 新增、修改和删除的混合测试。
         let mut old = Snapshot::empty("1.0.0");
-        old.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
-        old.files.insert("content/ch-002.md".to_string(), "bbb".to_string());
-        old.files.insert("content/ch-003.md".to_string(), "ccc".to_string());
+        old.files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
+        old.files
+            .insert("content/ch-002.md".to_string(), "bbb".to_string());
+        old.files
+            .insert("content/ch-003.md".to_string(), "ccc".to_string());
 
         let mut current = Snapshot::empty("1.1.0");
         // ch-001: unchanged / 未变更
-        current.files.insert("content/ch-001.md".to_string(), "aaa".to_string());
+        current
+            .files
+            .insert("content/ch-001.md".to_string(), "aaa".to_string());
         // ch-002: modified / 修改
-        current.files.insert("content/ch-002.md".to_string(), "bbb_modified".to_string());
+        current
+            .files
+            .insert("content/ch-002.md".to_string(), "bbb_modified".to_string());
         // ch-003: deleted (not in current) / 删除（不在当前中）
         // ch-004: added / 新增
-        current.files.insert("content/ch-004.md".to_string(), "ddd".to_string());
+        current
+            .files
+            .insert("content/ch-004.md".to_string(), "ddd".to_string());
 
         let changes = old.diff(&current);
         assert_eq!(changes.added, vec!["content/ch-004.md"]);

@@ -69,8 +69,7 @@ impl UcxId {
 
         // Validate the UUID portion.
         // 验证 UUID 部分。
-        Uuid::parse_str(uuid_str)
-            .map_err(|e| UcxIdError::InvalidUuid(e.to_string()))?;
+        Uuid::parse_str(uuid_str).map_err(|e| UcxIdError::InvalidUuid(e.to_string()))?;
 
         Ok(Self(s.to_string()))
     }
@@ -190,6 +189,9 @@ mod tests {
         // Display should show the full URN.
         // Display 应显示完整的 URN。
         let id = UcxId::parse("urn:ucx:550e8400-e29b-41d4-a716-446655440000").unwrap();
-        assert_eq!(format!("{id}"), "urn:ucx:550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            format!("{id}"),
+            "urn:ucx:550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 }

@@ -67,7 +67,12 @@ pub enum VersionError {
 ///
 /// Recommended semantic: X = volume, Y = chapter, Z = patch.
 /// 推荐语义：X = 卷号, Y = 章节数, Z = 修订号。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// `PartialOrd`/`Ord` compare fields in declaration order (volume, then chapter,
+// then patch), which is exactly the intended semantic-version ordering — enabling
+// monotonicity checks (e.g. detecting a downgrade).
+// `PartialOrd`/`Ord` 按声明顺序（volume、chapter、patch）比较字段，恰为预期的
+// 语义版本顺序——便于做单调性检查（如检测降级）。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct UcxVersion {
     /// Volume number (X). Increments when a new volume starts.
     /// 卷号（X）。开始新卷时递增。
@@ -87,14 +92,22 @@ impl UcxVersion {
     ///
     /// 创建一个新的 `UcxVersion`。
     pub fn new(volume: u32, chapter: u32, patch: u32) -> Self {
-        Self { volume, chapter, patch }
+        Self {
+            volume,
+            chapter,
+            patch,
+        }
     }
 
     /// The zero version (0.0.0), used as the initial version before any release.
     ///
     /// 零版本（0.0.0），用作首次发布前的初始版本。
     pub fn zero() -> Self {
-        Self { volume: 0, chapter: 0, patch: 0 }
+        Self {
+            volume: 0,
+            chapter: 0,
+            patch: 0,
+        }
     }
 
     /// Parse a version string in "X.Y.Z" format.
@@ -125,7 +138,11 @@ impl UcxVersion {
             VersionError::InvalidVersion(format!("invalid patch number: '{}'", parts[2]))
         })?;
 
-        Ok(Self { volume, chapter, patch })
+        Ok(Self {
+            volume,
+            chapter,
+            patch,
+        })
     }
 }
 
@@ -307,12 +324,29 @@ pub fn auto_version(
     // 读取当前结构以确定章节编号。
     let struct_path = project_path.join("content").join("struct.json");
     let structure = if struct_path.exists() {
-        let content = std::fs::read_to_string(&struct_path).map_err(|e| {
-            VersionError::Structure(format!("failed to read struct.json: {e}"))
-        })?;
-        serde_json::from_str(&content).map_err(|e| {
-            VersionError::Structure(format!("failed to parse struct.json: {e}"))
-        })?
+        // M-3: enforce the SAME struct.json DoS bounds as ucx-build (shared
+        // constants/guard in ucx-types). `ucx version auto/chapter` reads
+        // struct.json on an untrusted project dir, so it needs the size + node/
+        // depth caps too — otherwise the parse-amplification DoS just moves here.
+        // M-3：强制与 ucx-build 相同的 struct.json DoS 上界（共享常量/守卫在
+        // ucx-types）。`ucx version auto/chapter` 在不可信项目目录读取 struct.json，
+        // 同样需要大小 + 节点/深度上限——否则解析放大 DoS 只是转移到此处。
+        let meta = std::fs::metadata(&struct_path)
+            .map_err(|e| VersionError::Structure(format!("failed to stat struct.json: {e}")))?;
+        if meta.len() > ucx_types::structure::MAX_STRUCT_JSON_BYTES {
+            return Err(VersionError::Structure(format!(
+                "content/struct.json is too large ({} bytes; limit {})",
+                meta.len(),
+                ucx_types::structure::MAX_STRUCT_JSON_BYTES
+            )));
+        }
+        let content = std::fs::read_to_string(&struct_path)
+            .map_err(|e| VersionError::Structure(format!("failed to read struct.json: {e}")))?;
+        let structure: ucx_types::Structure = serde_json::from_str(&content)
+            .map_err(|e| VersionError::Structure(format!("failed to parse struct.json: {e}")))?;
+        ucx_types::structure::enforce_structure_limits(&structure.structure)
+            .map_err(|e| VersionError::Structure(e.to_string()))?;
+        structure
     } else {
         // No struct.json — use an empty structure.
         // 无 struct.json — 使用空结构。

@@ -58,7 +58,9 @@ pub enum PathSafetyError {
     ControlChar(String),
 
     /// The path contained a backslash. / 路径含反斜杠。
-    #[error("path contains a backslash, use forward slashes only / 路径含反斜杠，仅允许正斜杠: '{0}'")]
+    #[error(
+        "path contains a backslash, use forward slashes only / 路径含反斜杠，仅允许正斜杠: '{0}'"
+    )]
     Backslash(String),
 
     /// The path was absolute (must be relative). / 路径为绝对路径（必须相对）。
@@ -74,7 +76,9 @@ pub enum PathSafetyError {
     ReservedName(String),
 
     /// A segment ended with a dot or space. / 某段以点或空格结尾。
-    #[error("path segment ends with a dot or space (ambiguous on Windows) / 路径段以点或空格结尾（Windows 下有歧义）: '{0}'")]
+    #[error(
+        "path segment ends with a dot or space (ambiguous on Windows) / 路径段以点或空格结尾（Windows 下有歧义）: '{0}'"
+    )]
     TrailingDotOrSpace(String),
 }
 
@@ -181,11 +185,28 @@ pub fn is_windows_reserved_name(segment: &str) -> bool {
     let upper = stem.to_ascii_uppercase();
     matches!(
         upper.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     )
 }
 

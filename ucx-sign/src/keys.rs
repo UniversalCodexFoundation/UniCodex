@@ -349,8 +349,8 @@ mod tests {
     /// 测试：generate_ed25519_keypair 返回有效的密钥对。
     #[test]
     fn test_generate_ed25519_keypair_returns_valid_keys() {
-        let (signing_key, verifying_key) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, verifying_key) =
+            generate_ed25519_keypair().expect("key generation should succeed");
 
         // The verifying key derived from the signing key should match.
         // 从签名密钥导出的验证密钥应当一致。
@@ -365,8 +365,7 @@ mod tests {
     /// 测试：save_private_key + load_private_key 往返一致。
     #[test]
     fn test_private_key_save_load_roundtrip() {
-        let (signing_key, _) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         // Create a temporary directory for the test.
         // 为测试创建临时目录。
@@ -391,8 +390,7 @@ mod tests {
     /// 测试：save_public_key + load_public_key 往返一致。
     #[test]
     fn test_public_key_save_load_roundtrip() {
-        let (_, verifying_key) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (_, verifying_key) = generate_ed25519_keypair().expect("key generation should succeed");
 
         // Create a temporary directory for the test.
         // 为测试创建临时目录。
@@ -437,8 +435,8 @@ mod tests {
     fn test_sign_and_verify_with_generated_keys() {
         use ed25519_dalek::Verifier;
 
-        let (signing_key, verifying_key) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, verifying_key) =
+            generate_ed25519_keypair().expect("key generation should succeed");
 
         // Sign a test message.
         // 对测试消息签名。
@@ -468,14 +466,12 @@ mod tests {
     fn test_save_private_key_sets_0600_on_unix() {
         use std::os::unix::fs::PermissionsExt;
 
-        let (signing_key, _) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         let tmp_dir = TempDir::new().expect("failed to create temp dir");
         let key_path = tmp_dir.path().join("sig5.pem");
 
-        save_private_key(&signing_key, &key_path)
-            .expect("save_private_key should succeed");
+        save_private_key(&signing_key, &key_path).expect("save_private_key should succeed");
 
         let mode = std::fs::metadata(&key_path)
             .expect("metadata should succeed")
@@ -503,14 +499,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_save_private_key_current_user_can_still_read_on_windows() {
-        let (signing_key, _) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         let tmp_dir = TempDir::new().expect("failed to create temp dir");
         let key_path = tmp_dir.path().join("sig5.pem");
 
-        save_private_key(&signing_key, &key_path)
-            .expect("save_private_key should succeed");
+        save_private_key(&signing_key, &key_path).expect("save_private_key should succeed");
 
         // The file must still exist and be readable by us.
         // 文件应仍然存在，且可由当前用户读取。
@@ -528,8 +522,7 @@ mod tests {
     /// 测试：PEM 输出以正确的头部开始。
     #[test]
     fn test_pem_output_starts_with_correct_header() {
-        let (signing_key, _) = generate_ed25519_keypair()
-            .expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         // Encode private key to PKCS#8 PEM.
         // 将私钥编码为 PKCS#8 PEM。
@@ -540,7 +533,9 @@ mod tests {
         // Verify PEM header.
         // 验证 PEM 头部。
         assert!(
-            pem_string.as_str().starts_with("-----BEGIN PRIVATE KEY-----"),
+            pem_string
+                .as_str()
+                .starts_with("-----BEGIN PRIVATE KEY-----"),
             "PEM output must start with '-----BEGIN PRIVATE KEY-----', got: {}",
             &pem_string.as_str()[..50]
         );

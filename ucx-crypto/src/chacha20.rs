@@ -49,11 +49,7 @@ pub type EncryptResult = (Vec<u8>, [u8; 12], [u8; 16]);
 
 /// A tuple of `(ciphertext, nonce, tag)` on success.
 /// 成功时返回 `(密文, nonce, 标签)` 元组。
-pub fn encrypt(
-    key: &[u8; 32],
-    plaintext: &[u8],
-    aad: &[u8],
-) -> Result<EncryptResult, CryptoError> {
+pub fn encrypt(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<EncryptResult, CryptoError> {
     // 1. Generate a random 12-byte nonce using CSPRNG.
     //    使用 CSPRNG 生成随机 12 字节 nonce。
     let mut nonce_bytes = [0u8; NONCE_SIZE];
@@ -67,7 +63,13 @@ pub fn encrypt(
     // 3. Encrypt with AAD bound into the Poly1305 tag.
     //    使用 Payload 将 AAD 绑入 Poly1305 认证标签。
     let combined = cipher
-        .encrypt(&nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::AuthenticationFailed)?;
 
     // 4. Split ciphertext and tag.

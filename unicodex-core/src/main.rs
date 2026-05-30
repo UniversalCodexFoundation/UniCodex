@@ -457,7 +457,8 @@ fn main() -> anyhow::Result<()> {
                 if !has_unicodex_toml {
                     // Check if directory is non-empty.
                     // 检查目录是否非空。
-                    let is_non_empty = path.read_dir()
+                    let is_non_empty = path
+                        .read_dir()
                         .map(|mut d| d.next().is_some())
                         .unwrap_or(false);
                     if is_non_empty {
@@ -490,10 +491,18 @@ fn main() -> anyhow::Result<()> {
 
             if from_existing {
                 ucx_init::init_from_existing(&path, &options)?;
-                println!("UCX project initialized from existing files: \"{}\" at {}", final_name, path.display());
+                println!(
+                    "UCX project initialized from existing files: \"{}\" at {}",
+                    final_name,
+                    path.display()
+                );
             } else {
                 ucx_init::init(&path, &options)?;
-                println!("UCX project initialized: \"{}\" at {}", final_name, path.display());
+                println!(
+                    "UCX project initialized: \"{}\" at {}",
+                    final_name,
+                    path.display()
+                );
             }
         }
 
@@ -543,18 +552,23 @@ fn main() -> anyhow::Result<()> {
                 },
             );
             if let Ok(ref out_path) = expected_output
-                && out_path.exists() && !force {
-                    eprintln!("Warning: output file already exists: {}", out_path.display());
-                    eprint!("Overwrite? [y/N] ");
-                    let mut input = String::new();
-                    if std::io::stdin().read_line(&mut input).is_ok() {
-                        let answer = input.trim().to_lowercase();
-                        if answer != "y" && answer != "yes" {
-                            println!("Aborted.");
-                            return Ok(());
-                        }
+                && out_path.exists()
+                && !force
+            {
+                eprintln!(
+                    "Warning: output file already exists: {}",
+                    out_path.display()
+                );
+                eprint!("Overwrite? [y/N] ");
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_ok() {
+                    let answer = input.trim().to_lowercase();
+                    if answer != "y" && answer != "yes" {
+                        println!("Aborted.");
+                        return Ok(());
                     }
                 }
+            }
 
             let options = ucx_build::BuildOptions {
                 output_dir,
@@ -669,16 +683,18 @@ fn main() -> anyhow::Result<()> {
 
             // Description / 简介
             if let Some(ref desc) = codex.description
-                && let Some(ref short) = desc.short {
-                    println!();
-                    println!("Description: {short}");
-                }
+                && let Some(ref short) = desc.short
+            {
+                println!();
+                println!("Description: {short}");
+            }
 
             // Structure / 结构
             let structure = archive.structure();
             let chapter_count = archive.chapter_count();
             println!();
-            println!("Structure ({} top-level nodes, {} chapters):",
+            println!(
+                "Structure ({} top-level nodes, {} chapters):",
                 structure.structure.len(),
                 chapter_count
             );
@@ -686,7 +702,8 @@ fn main() -> anyhow::Result<()> {
 
             // Manifest / 清单
             println!();
-            println!("Manifest ({} entries, {}):",
+            println!(
+                "Manifest ({} entries, {}):",
                 manifest.entries.len(),
                 manifest.hash_algorithm
             );
@@ -699,7 +716,11 @@ fn main() -> anyhow::Result<()> {
         // ucx verify — Verify UCX file integrity.
         // ucx verify — 验证 UCX 文件完整性。
         // =====================================================================
-        Commands::Verify { file, verbose, show_signers } => {
+        Commands::Verify {
+            file,
+            verbose,
+            show_signers,
+        } => {
             let start = std::time::Instant::now();
 
             // Friendly short-circuit: if the first 4 bytes are the UCXE magic,
@@ -768,7 +789,10 @@ fn main() -> anyhow::Result<()> {
                     }
                     if let Some(ref l1) = report.layer1 {
                         let icon = if l1.valid { "OK" } else { "FAIL" };
-                        println!("  [{icon}] Layer 1 (file signatures): {} signer(s) - {}", l1.signer_count, l1.details);
+                        println!(
+                            "  [{icon}] Layer 1 (file signatures): {} signer(s) - {}",
+                            l1.signer_count, l1.details
+                        );
                     }
 
                     if show_signers && !report.signers.is_empty() {
@@ -776,7 +800,10 @@ fn main() -> anyhow::Result<()> {
                         println!("Signers:");
                         for (i, signer) in report.signers.iter().enumerate() {
                             println!("  [{}] {}", i + 1, sanitize_for_display(&signer.signer_id));
-                            println!("      Subject: CN={}", sanitize_for_display(&signer.subject_cn));
+                            println!(
+                                "      Subject: CN={}",
+                                sanitize_for_display(&signer.subject_cn)
+                            );
                             println!("      Type: {}", signer.cert_type);
                             println!("      Fingerprint: {}", signer.fingerprint_blake3);
                             let l1_icon = if signer.layer1_valid { "OK" } else { "FAIL" };
@@ -853,7 +880,11 @@ fn main() -> anyhow::Result<()> {
         // ucx unpack — Extract a UCX file to a directory.
         // ucx unpack — 将 UCX 文件解包到目录。
         // =====================================================================
-        Commands::Unpack { file, output, force } => {
+        Commands::Unpack {
+            file,
+            output,
+            force,
+        } => {
             // Determine the output directory.
             // If --output is provided, use it; otherwise, derive from the file stem.
             // 确定输出目录。
@@ -865,8 +896,7 @@ fn main() -> anyhow::Result<()> {
                     // e.g., "novel.ucx" -> "novel/"
                     // 使用文件名（不含扩展名）作为输出目录名。
                     // 如 "novel.ucx" -> "novel/"
-                    file
-                        .file_stem()
+                    file.file_stem()
                         .map(PathBuf::from)
                         .unwrap_or_else(|| PathBuf::from("ucx_output"))
                 }
@@ -917,7 +947,10 @@ fn main() -> anyhow::Result<()> {
             println!("  Private key: {}", output.display());
             let mut pub_path = output.as_os_str().to_owned();
             pub_path.push(".pub");
-            println!("  Public key:  {}", std::path::PathBuf::from(pub_path).display());
+            println!(
+                "  Public key:  {}",
+                std::path::PathBuf::from(pub_path).display()
+            );
         }
 
         // =====================================================================
@@ -929,7 +962,12 @@ fn main() -> anyhow::Result<()> {
             // ucx cert create — Create a self-signed certificate.
             // ucx cert create — 创建自签名证书。
             // -----------------------------------------------------------------
-            CertAction::Create { key, cn, days, output } => {
+            CertAction::Create {
+                key,
+                cn,
+                days,
+                output,
+            } => {
                 ucx_sign::create_cert(&key, &cn, days, &output)?;
                 println!("Certificate created: {}", output.display());
                 println!("  Subject: CN={cn}");
@@ -974,7 +1012,12 @@ fn main() -> anyhow::Result<()> {
         // ucx sign — Sign a UCX file with dual-layer signatures.
         // ucx sign — 对 UCX 文件进行双层签名。
         // =====================================================================
-        Commands::Sign { file, key, cert, signer_id } => {
+        Commands::Sign {
+            file,
+            key,
+            cert,
+            signer_id,
+        } => {
             ucx_sign::sign(&file, &key, &cert, &signer_id)?;
             println!("UCX file signed: {}", file.display());
             println!("  Signer ID: {signer_id}");
@@ -984,11 +1027,21 @@ fn main() -> anyhow::Result<()> {
         Commands::Version { action, path } => {
             handle_version_command(action, &path)?;
         }
-        Commands::Encrypt { file, output, algorithm, key, passphrase, kdf, allow_weak } => {
+        Commands::Encrypt {
+            file,
+            output,
+            algorithm,
+            key,
+            passphrase,
+            kdf,
+            allow_weak,
+        } => {
             // 解析加密算法 / Parse the encryption algorithm.
             let algo = match algorithm.as_str() {
                 "AES-256-GCM" | "aes-256-gcm" => ucx_crypto::Algorithm::Aes256Gcm,
-                "ChaCha20-Poly1305" | "chacha20-poly1305" => ucx_crypto::Algorithm::ChaCha20Poly1305,
+                "ChaCha20-Poly1305" | "chacha20-poly1305" => {
+                    ucx_crypto::Algorithm::ChaCha20Poly1305
+                }
                 "AES-256-CBC" | "aes-256-cbc" => ucx_crypto::Algorithm::Aes256Cbc,
                 _ => anyhow::bail!("unsupported algorithm: {algorithm}"),
             };
@@ -1004,7 +1057,8 @@ fn main() -> anyhow::Result<()> {
                     "pbkdf2" | "PBKDF2" => ucx_crypto::Kdf::Pbkdf2HmacSha256,
                     _ => anyhow::bail!("unsupported KDF: {kdf}"),
                 };
-                eprint!("Enter passphrase: ");
+                // read_passphrase() prints its own no-echo prompt.
+                // read_passphrase() 自带无回显提示。
                 let pass = read_passphrase()?;
 
                 // DOC-3: enforce minimum passphrase length unless --allow-weak.
@@ -1040,14 +1094,25 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("must specify --key or --passphrase");
             }
         }
-        Commands::Decrypt { file, output, key, passphrase } => {
+        Commands::Decrypt {
+            file,
+            output,
+            key,
+            passphrase,
+        } => {
             // 确定输出路径（默认覆盖源文件） / Determine output path (default: overwrite source).
             let dest = output.as_ref().unwrap_or(&file);
 
-            let plaintext = if passphrase {
+            // Wrap the decrypted plaintext in Zeroizing so this sensitive data
+            // (often full chapter text) is wiped from memory on drop, matching the
+            // zeroize baseline ucx-crypto already applies to keys.
+            // 用 Zeroizing 包装解密明文，使这些敏感数据（常为完整章节正文）在 Drop 时
+            // 从内存清零，与 ucx-crypto 对密钥已有的 zeroize 基线一致。
+            let plaintext = zeroize::Zeroizing::new(if passphrase {
                 // 口令模式：交互式读取口令并解密
                 // Passphrase mode: interactively read passphrase and decrypt.
-                eprint!("Enter passphrase: ");
+                // read_passphrase() prints its own no-echo prompt.
+                // read_passphrase() 自带无回显提示。
                 let pass = read_passphrase()?;
                 ucx_crypto::decrypt_with_passphrase(&file, &pass)?
             } else if let Some(key_b64) = key {
@@ -1063,9 +1128,14 @@ fn main() -> anyhow::Result<()> {
                 ucx_crypto::decrypt(&file, &key_arr)?
             } else {
                 anyhow::bail!("must specify --key or --passphrase");
-            };
+            });
 
-            std::fs::write(dest, &plaintext)?;
+            // Atomic write: encrypt/decrypt default to overwriting the SOURCE file
+            // in place; a non-atomic write interrupted mid-way (disk full, power
+            // loss, kill) would truncate the original and lose the user's only copy.
+            // 原子写：encrypt/decrypt 默认就地覆盖**源文件**；非原子写若中途中断
+            //（磁盘满、断电、被杀）会截断原文件、丢失用户唯一副本。
+            atomic_write(dest, &plaintext)?;
             println!("File decrypted: {}", dest.display());
             println!("  Size: {} bytes", plaintext.len());
         }
@@ -1091,6 +1161,21 @@ fn main() -> anyhow::Result<()> {
 /// 文件存在且前 4 字节等于魔数返回 `Ok(true)`；文件不足 4 字节或不等则
 /// 返回 `Ok(false)`；其他 I/O 错误原样向上传递。
 /// `ucx verify` 调用此函数在用户传入 UCXE 裸文件时快速给出友好提示。
+fn is_ucxe_encrypted_file(path: &std::path::Path) -> anyhow::Result<bool> {
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut magic = [0u8; 4];
+    match file.read_exact(&mut magic) {
+        Ok(()) => Ok(magic == *b"UCXE"),
+        // Short file — can't be an UCXE header. Not our job to classify; let
+        // the normal parse surface its own error.
+        // 文件过短 — 肯定不是 UCXE 头，交由正常解析路径报错。
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Sanitize an untrusted string for safe SINGLE-LINE display in trust-sensitive
 /// output (certificate Common Name, signer subject). Any control character —
 /// most importantly CR/LF — is rendered as a visible escape (`\n`, `\u{0}`, ...)
@@ -1122,28 +1207,99 @@ fn sanitize_for_display(s: &str) -> String {
     out
 }
 
-fn is_ucxe_encrypted_file(path: &std::path::Path) -> anyhow::Result<bool> {
-    use std::io::Read as _;
+/// Write `bytes` to `dest` ATOMICALLY: write to a uniquely-named temporary file
+/// in the same directory, flush+fsync it, then rename it over `dest`. On the same
+/// volume `rename` is atomic, so a crash mid-write leaves either the old file
+/// fully intact or the new file complete — never a truncated `dest`.
+///
+/// This matters because `ucx encrypt`/`decrypt` default to overwriting the SOURCE
+/// file in place; a plain `fs::write` interrupted mid-way (disk full, power loss,
+/// process kill) would truncate the user's only copy and lose their manuscript.
+///
+/// 将 `bytes` **原子地**写入 `dest`：先写入同目录下唯一命名的临时文件、flush+fsync，
+/// 再 rename 覆盖 `dest`。同卷上 `rename` 是原子的，因此写入中途崩溃时，要么旧文件
+/// 完好无损、要么新文件完整——绝不会留下被截断的 `dest`。
+/// 这很重要，因为 `ucx encrypt`/`decrypt` 默认就地覆盖**源文件**；普通 `fs::write`
+/// 若中途中断（磁盘满、断电、进程被杀）会截断用户的唯一副本、丢失稿件。
+fn atomic_write(dest: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let dir = dest.parent().filter(|p| !p.as_os_str().is_empty());
+    let dir = dir.unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = dest
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("ucx_output");
+    // Unique temp name in the same dir (pid avoids clashes between concurrent
+    // invocations). Same-directory placement keeps the final rename on one volume.
+    // 同目录下的唯一临时名（pid 避免并发调用冲突）。同目录放置使最终 rename 在同卷。
+    let tmp = dir.join(format!(".{file_name}.{}.ucx-tmp", std::process::id()));
 
-    let mut file = std::fs::File::open(path)?;
-    let mut magic = [0u8; 4];
-    match file.read_exact(&mut magic) {
-        Ok(()) => Ok(magic == *b"UCXE"),
-        // Short file — can't be an UCXE header. Not our job to classify; let
-        // the normal parse surface its own error.
-        // 文件过短 — 肯定不是 UCXE 头，交由正常解析路径报错。
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(e) => Err(e.into()),
+    // Scope the file handle so it is closed before the rename.
+    // 限定文件句柄作用域，使其在 rename 前关闭。
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
     }
+
+    // Atomic replace. On failure, clean up the temp file so we leave no litter.
+    // 原子替换。失败时清理临时文件，不留垃圾。
+    if let Err(e) = std::fs::rename(&tmp, dest) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(())
 }
 
-/// Read a passphrase from stdin (no echo if terminal).
+/// Read a passphrase, suppressing terminal echo when run interactively.
 ///
-/// 从标准输入读取口令（如果是终端则不回显）。
-fn read_passphrase() -> anyhow::Result<String> {
-    let mut pass = String::new();
-    std::io::stdin().read_line(&mut pass)?;
-    let pass = pass.trim_end().to_string();
+/// Behaviour depends on whether stdin is a TTY:
+/// - **Interactive (stdin is a terminal):** use `rpassword` so the typed
+///   passphrase is NOT echoed — it would otherwise remain visible in the terminal
+///   scrollback, screen shares, and recordings (the previous implementation used
+///   `read_line`, which echoes, while its doc-comment falsely claimed "no echo").
+/// - **Non-interactive (pipe / CI / file redirect):** read a line from stdin.
+///   Echo suppression is meaningless for piped input, and crucially `rpassword`
+///   on Windows reads the console device directly (`CONIN$`), which IGNORES a
+///   redirected stdin and HANGS waiting for console input — so a pure-rpassword
+///   implementation would break every scripted/automated `ucx … -p` invocation.
+///   The TTY check restores pipe compatibility while keeping no-echo interactively.
+///
+/// The result is wrapped in [`zeroize::Zeroizing`] so the passphrase is wiped
+/// from memory when dropped; the intermediate untrimmed copy is also zeroized.
+///
+/// 读取口令，交互运行时抑制终端回显。
+/// 行为取决于 stdin 是否为 TTY：
+/// - **交互（stdin 为终端）：** 用 `rpassword` 使输入的口令**不回显**——否则会残留
+///   在终端滚动历史、屏幕共享与录屏中（旧实现用会回显的 `read_line`，其注释却谎称
+///   "不回显"）。
+/// - **非交互（管道 / CI / 文件重定向）：** 从 stdin 读一行。对管道输入而言回显抑制
+///   无意义，且关键在于 Windows 上 `rpassword` 直接读取控制台设备（`CONIN$`），会
+///   **忽略**被重定向的 stdin 并**挂起**等待控制台输入——纯 rpassword 实现会破坏所有
+///   脚本化/自动化的 `ucx … -p` 调用。TTY 检查在保持交互无回显的同时恢复管道兼容。
+/// 结果用 [`zeroize::Zeroizing`] 包装，使口令在 Drop 时从内存清零；中间未 trim 的
+/// 副本也会被清零。
+fn read_passphrase() -> anyhow::Result<zeroize::Zeroizing<String>> {
+    use std::io::IsTerminal as _;
+    use zeroize::Zeroize as _;
+
+    let mut raw = if std::io::stdin().is_terminal() {
+        // Interactive terminal: read with echo disabled.
+        // 交互终端：关闭回显读取。
+        rpassword::prompt_password("Enter passphrase: ")?
+    } else {
+        // Non-TTY (pipe / CI): read a line from stdin (echo suppression is moot).
+        // 非 TTY（管道 / CI）：从 stdin 读一行（回显抑制无意义）。
+        use std::io::Write as _;
+        eprint!("Enter passphrase: ");
+        std::io::stderr().flush().ok();
+        let mut s = String::new();
+        std::io::stdin().read_line(&mut s)?;
+        s
+    };
+
+    let pass = zeroize::Zeroizing::new(raw.trim_end().to_string());
+    raw.zeroize();
     if pass.is_empty() {
         anyhow::bail!("passphrase cannot be empty");
     }
@@ -1244,7 +1400,9 @@ const VERSION_STATE_FILE: &str = ".ucx-version.json";
 ///
 /// 从 `.ucx-version.json` 加载当前版本状态。
 /// 文件不存在时返回 `None`。
-fn load_version_state(project_path: &std::path::Path) -> anyhow::Result<Option<ucx_types::FileVersion>> {
+fn load_version_state(
+    project_path: &std::path::Path,
+) -> anyhow::Result<Option<ucx_types::FileVersion>> {
     let path = project_path.join(VERSION_STATE_FILE);
     if !path.exists() {
         return Ok(None);
@@ -1277,9 +1435,7 @@ fn build_file_version(
     version: &ucx_version::UcxVersion,
     previous: Option<&ucx_types::FileVersion>,
 ) -> ucx_types::FileVersion {
-    let prev_revision = previous
-        .and_then(|fv| fv.revision)
-        .unwrap_or(0);
+    let prev_revision = previous.and_then(|fv| fv.revision).unwrap_or(0);
     ucx_types::FileVersion {
         version: Some(version.to_string()),
         revision: Some(prev_revision + 1),
@@ -1324,8 +1480,12 @@ fn handle_version_command(
             // 自动检测变更并升级版本。
             let (current, changes) = ucx_version::detect_changes(&project_path)?;
             println!("Current version: {current}");
-            println!("Changes: {} added, {} modified, {} deleted",
-                changes.added.len(), changes.modified.len(), changes.deleted.len());
+            println!(
+                "Changes: {} added, {} modified, {} deleted",
+                changes.added.len(),
+                changes.modified.len(),
+                changes.deleted.len()
+            );
 
             let next = ucx_version::auto_version(&current, &changes, &project_path)?;
             if next == current && !changes.is_empty() {
@@ -1337,7 +1497,10 @@ fn handle_version_command(
                 let prev_state = load_version_state(&project_path)?;
                 let fv = build_file_version(&next, prev_state.as_ref());
                 save_version_state(&project_path, &fv)?;
-                println!("Saved to {VERSION_STATE_FILE} (revision {})", fv.revision.unwrap_or(0));
+                println!(
+                    "Saved to {VERSION_STATE_FILE} (revision {})",
+                    fv.revision.unwrap_or(0)
+                );
             }
         }
         Some(VersionAction::Patch) => {
@@ -1407,8 +1570,30 @@ fn handle_version_command(
             // Set version to a specific value.
             // 设置为指定版本。
             let parsed = ucx_version::UcxVersion::parse(&version)?;
-            println!("Setting version to {parsed}");
             let prev_state = load_version_state(&project_path)?;
+
+            // Surface a downgrade. Unlike `auto`/`chapter` (which refuse to go
+            // backwards), `set` is the explicit manual override and is allowed to
+            // set any version — but a silent backward jump violates the
+            // monotonic-version intent of docs/07-versioning, so warn so the
+            // downgrade is explainable and intentional rather than silent.
+            // 提示降级。与 `auto`/`chapter`（拒绝倒退）不同，`set` 是显式手动覆盖，
+            // 允许设为任意版本——但静默倒退违反 docs/07-versioning 的版本单调意图，
+            // 故告警，使降级是可解释、有意为之而非静默发生的。
+            if let Some(current) = prev_state
+                .as_ref()
+                .and_then(|fv| fv.version.as_deref())
+                .and_then(|v| ucx_version::UcxVersion::parse(v).ok())
+            {
+                if parsed < current {
+                    eprintln!(
+                        "warning: setting version DOWN from {current} to {parsed} (downgrade); \
+                         `auto`/`chapter` refuse this — proceeding because `set` is an explicit override"
+                    );
+                }
+            }
+
+            println!("Setting version to {parsed}");
             let fv = build_file_version(&parsed, prev_state.as_ref());
             save_version_state(&project_path, &fv)?;
             println!("Saved to {VERSION_STATE_FILE}");

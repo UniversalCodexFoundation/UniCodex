@@ -111,6 +111,34 @@ fn derive_chunk_nonce(base_nonce: &[u8; 12], chunk_index: u32) -> [u8; 12] {
     nonce
 }
 
+/// Build the per-chunk AEAD AAD by binding the total `chunk_count` to the
+/// file-level AAD: `aad ‖ chunk_count.to_le_bytes()` (4 bytes, little-endian).
+///
+/// Binding `chunk_count` makes every chunk's AEAD authentication cover how many
+/// chunks the file is *supposed* to contain. The per-chunk nonce already binds
+/// the chunk index (so reorder/replacement is detected), but WITHOUT binding the
+/// count an attacker could delete trailing chunks and decrement the serialized
+/// `chunk_count`: the surviving chunks keep their original index/nonce/key/AAD
+/// and still authenticate, silently truncating the plaintext with no
+/// `AuthenticationFailed`. With the count bound into the AAD, decrypting the
+/// truncated file (whose declared count is now smaller) recomputes a different
+/// AAD for every chunk and authentication fails — closing the truncation attack.
+///
+/// 通过把总 `chunk_count` 绑入文件级 AAD 构造逐块 AEAD AAD：
+/// `aad ‖ chunk_count.to_le_bytes()`（4 字节小端）。
+///
+/// 绑定 `chunk_count` 使每块的 AEAD 认证覆盖"文件本应含多少块"。逐块 nonce 已绑定
+/// 块索引（可检出乱序/替换），但若**不**绑定总数，攻击者可删除尾部分块并把序列化的
+/// `chunk_count` 减小：存活的块保持原索引/nonce/key/AAD 仍能通过认证，从而静默截断
+/// 明文而无 `AuthenticationFailed`。把总数绑入 AAD 后，解密被截断的文件（其声明总数
+/// 已变小）会为每块重算出不同的 AAD，认证失败——封堵截断攻击。
+fn build_chunk_aad(aad: &[u8], chunk_count: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(aad.len() + 4);
+    out.extend_from_slice(aad);
+    out.extend_from_slice(&chunk_count.to_le_bytes());
+    out
+}
+
 /// Internal: encrypt plaintext with AES-256-GCM using a specific nonce.
 /// 内部函数：使用指定 nonce 进行 AES-256-GCM 加密。
 ///
@@ -128,7 +156,13 @@ fn encrypt_aes_gcm_with_nonce(
     // Encrypt with AAD bound into the GCM tag.
     // 使用 AAD 绑定到 GCM 标签。
     let combined = cipher
-        .encrypt(&nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::InvalidFormat("AES-256-GCM chunk encryption failed".into()))?;
 
     // Split ciphertext and tag.
@@ -189,7 +223,10 @@ fn encrypt_chacha20_with_nonce(
     let combined = cipher
         .encrypt(
             &nonce,
-            chacha20poly1305::aead::Payload { msg: plaintext, aad },
+            chacha20poly1305::aead::Payload {
+                msg: plaintext,
+                aad,
+            },
         )
         .map_err(|_| {
             CryptoError::InvalidFormat("ChaCha20-Poly1305 chunk encryption failed".into())
@@ -287,6 +324,10 @@ pub fn encrypt_chunked(
     let chunks_iter: Vec<&[u8]> = plaintext.chunks(CHUNK_SIZE).collect();
     let chunk_count = chunks_iter.len() as u32;
 
+    // Bind chunk_count into every chunk's AAD (anti-truncation, see build_chunk_aad).
+    // 把 chunk_count 绑入每块的 AAD（防截断，见 build_chunk_aad）。
+    let bound_aad = build_chunk_aad(aad, chunk_count);
+
     let mut encrypted_chunks = Vec::with_capacity(chunks_iter.len());
 
     for (index, chunk) in chunks_iter.iter().enumerate() {
@@ -297,9 +338,11 @@ pub fn encrypt_chunked(
         // Encrypt chunk using the appropriate algorithm.
         // 使用对应算法加密分块。
         let (ciphertext, tag) = match algorithm {
-            Algorithm::Aes256Gcm => encrypt_aes_gcm_with_nonce(key, &chunk_nonce, chunk, aad)?,
+            Algorithm::Aes256Gcm => {
+                encrypt_aes_gcm_with_nonce(key, &chunk_nonce, chunk, &bound_aad)?
+            }
             Algorithm::ChaCha20Poly1305 => {
-                encrypt_chacha20_with_nonce(key, &chunk_nonce, chunk, aad)?
+                encrypt_chacha20_with_nonce(key, &chunk_nonce, chunk, &bound_aad)?
             }
             // Already checked above, but exhaustive match required.
             // 上面已检查，但需要穷举匹配。
@@ -367,6 +410,16 @@ pub fn decrypt_chunked(
         ));
     }
 
+    // Bind the DECLARED chunk_count into every chunk's AAD (anti-truncation, see
+    // build_chunk_aad). If a file was truncated (trailing chunks removed and the
+    // serialized count decremented), the surviving chunks were authenticated with
+    // the ORIGINAL larger count, so this recomputed AAD will not match and every
+    // chunk fails AEAD authentication.
+    // 把**声明的** chunk_count 绑入每块的 AAD（防截断，见 build_chunk_aad）。若文件被
+    // 截断（移除尾部分块并把序列化总数减小），存活的块是以**原始更大的**总数认证的，
+    // 因此此处重算的 AAD 不匹配，每块都会 AEAD 认证失败。
+    let bound_aad = build_chunk_aad(aad, chunked.chunk_count);
+
     let mut plaintext = Vec::new();
 
     for (index, chunk) in chunked.chunks.iter().enumerate() {
@@ -377,12 +430,20 @@ pub fn decrypt_chunked(
         // Decrypt chunk using the appropriate algorithm.
         // 使用对应算法解密分块。
         let decrypted = match algorithm {
-            Algorithm::Aes256Gcm => {
-                decrypt_aes_gcm_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag, aad)?
-            }
-            Algorithm::ChaCha20Poly1305 => {
-                decrypt_chacha20_with_nonce(key, &chunk_nonce, &chunk.ciphertext, &chunk.tag, aad)?
-            }
+            Algorithm::Aes256Gcm => decrypt_aes_gcm_with_nonce(
+                key,
+                &chunk_nonce,
+                &chunk.ciphertext,
+                &chunk.tag,
+                &bound_aad,
+            )?,
+            Algorithm::ChaCha20Poly1305 => decrypt_chacha20_with_nonce(
+                key,
+                &chunk_nonce,
+                &chunk.ciphertext,
+                &chunk.tag,
+                &bound_aad,
+            )?,
             Algorithm::Aes256Cbc => unreachable!(),
         };
 
@@ -513,9 +574,12 @@ pub fn deserialize_chunks(
                 i
             )));
         }
-        let ct_size =
-            u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-                as usize;
+        let ct_size = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         // Read ciphertext bytes. Use checked_add to defend against usize overflow
@@ -592,7 +656,9 @@ mod tests {
 
         // Non-zero base: high 8 bytes are preserved verbatim; low 4 bytes carry the counter.
         // 非零 base：高 8 字节原样保留，低 4 字节为计数器。
-        let base2 = [0xFF, 0x00, 0xAA, 0x55, 0x11, 0x22, 0x33, 0x44, 0xAB, 0xCD, 0xEF, 0x01];
+        let base2 = [
+            0xFF, 0x00, 0xAA, 0x55, 0x11, 0x22, 0x33, 0x44, 0xAB, 0xCD, 0xEF, 0x01,
+        ];
         let n1_b2 = derive_chunk_nonce(&base2, 1);
         assert_eq!(n1_b2[0..8], base2[0..8]);
         assert_eq!(n1_b2[8..12], [0x00, 0x00, 0x00, 0x01]);
@@ -681,7 +747,8 @@ mod tests {
         let nonce = [0x01u8; 12];
         let plaintext = vec![0xAAu8; CHUNK_SIZE * 2];
 
-        let mut chunked = encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
+        let mut chunked =
+            encrypt_chunked(&key, &nonce, &plaintext, Algorithm::Aes256Gcm, b"").unwrap();
 
         // Tamper with the second chunk's ciphertext.
         // 篡改第二个分块的密文。
@@ -795,5 +862,36 @@ mod tests {
             matches!(result, Err(CryptoError::InvalidFormat(_))),
             "empty ChunkedCiphertext must be rejected, got: {result:?}"
         );
+    }
+
+    /// Security regression (chunk-truncation): deleting trailing chunks and
+    /// decrementing the declared chunk_count must FAIL AEAD authentication —
+    /// because chunk_count is bound into every chunk's AAD — instead of silently
+    /// returning a truncated plaintext.
+    ///
+    /// 安全回归（分块截断）：删除尾部分块并把声明的 chunk_count 减小，必须导致
+    /// AEAD 认证失败（因 chunk_count 绑入每块 AAD），而非静默返回被截断的明文。
+    #[test]
+    fn test_decrypt_rejects_chunk_truncation() {
+        let key = [0x42u8; 32];
+        let nonce = [0xABu8; 12];
+        // 3 chunks: 2 full + 1 partial.
+        let plaintext = vec![0x77u8; 2 * CHUNK_SIZE + 1234];
+        let aad = b"file-level-aad";
+        for algo in [Algorithm::Aes256Gcm, Algorithm::ChaCha20Poly1305] {
+            let full = encrypt_chunked(&key, &nonce, &plaintext, algo, aad).unwrap();
+            assert_eq!(full.chunk_count, 3);
+            // Attacker truncates: drop the last chunk AND decrement the count.
+            // 攻击者截断：丢弃最后一块**并**把计数减小。
+            let truncated = ChunkedCiphertext {
+                chunk_count: full.chunk_count - 1,
+                chunks: full.chunks[..full.chunks.len() - 1].to_vec(),
+            };
+            let result = decrypt_chunked(&key, &nonce, &truncated, algo, aad);
+            assert!(
+                matches!(result, Err(CryptoError::AuthenticationFailed)),
+                "truncated chunk stream must fail authentication for {algo:?}, got: {result:?}"
+            );
+        }
     }
 }

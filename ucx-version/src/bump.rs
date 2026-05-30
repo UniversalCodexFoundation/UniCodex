@@ -57,12 +57,23 @@ pub fn classify_changes(
         return Ok(ChangeKind::ModificationOnly);
     }
 
-    let struct_content = std::fs::read_to_string(&struct_path).map_err(|e| {
-        VersionError::Structure(format!("failed to read struct.json: {e}"))
-    })?;
-    let structure: Structure = serde_json::from_str(&struct_content).map_err(|e| {
-        VersionError::Structure(format!("failed to parse struct.json: {e}"))
-    })?;
+    // M-3: same struct.json DoS bounds as ucx-build (shared guard in ucx-types).
+    // M-3：与 ucx-build 相同的 struct.json DoS 上界（ucx-types 共享守卫）。
+    let struct_meta = std::fs::metadata(&struct_path)
+        .map_err(|e| VersionError::Structure(format!("failed to stat struct.json: {e}")))?;
+    if struct_meta.len() > ucx_types::structure::MAX_STRUCT_JSON_BYTES {
+        return Err(VersionError::Structure(format!(
+            "content/struct.json is too large ({} bytes; limit {})",
+            struct_meta.len(),
+            ucx_types::structure::MAX_STRUCT_JSON_BYTES
+        )));
+    }
+    let struct_content = std::fs::read_to_string(&struct_path)
+        .map_err(|e| VersionError::Structure(format!("failed to read struct.json: {e}")))?;
+    let structure: Structure = serde_json::from_str(&struct_content)
+        .map_err(|e| VersionError::Structure(format!("failed to parse struct.json: {e}")))?;
+    ucx_types::structure::enforce_structure_limits(&structure.structure)
+        .map_err(|e| VersionError::Structure(e.to_string()))?;
 
     // Check if any added files correspond to new content in the structure.
     // 检查是否有新增文件对应结构中的新内容。
@@ -76,9 +87,7 @@ pub fn classify_changes(
         .filter(|f| {
             // Check if the added file matches a leaf node.
             // 检查新增文件是否匹配叶子节点。
-            let file_in_content = f
-                .strip_prefix("content/")
-                .unwrap_or(f.as_str());
+            let file_in_content = f.strip_prefix("content/").unwrap_or(f.as_str());
             all_leaf_files.iter().any(|leaf| leaf == file_in_content)
         })
         .collect();
@@ -107,9 +116,8 @@ pub fn classify_changes(
         // 则可能是新卷。简化处理：检查最后一个顶层节点的子节点是否包含新增文件。
         let last_volume = structure.structure.last().unwrap();
         if last_volume.children.is_some() {
-            let last_volume_files = collect_all_leaf_files(
-                last_volume.children.as_deref().unwrap_or(&[]),
-            );
+            let last_volume_files =
+                collect_all_leaf_files(last_volume.children.as_deref().unwrap_or(&[]));
             let added_in_last_volume = added_content_files.iter().any(|f| {
                 let file_in_content = f.strip_prefix("content/").unwrap_or(f.as_str());
                 last_volume_files.iter().any(|leaf| leaf == file_in_content)
@@ -155,10 +163,7 @@ pub fn find_latest_chapter_number(structure: &Structure) -> u32 {
 
     // Check if the structure has volume containers (top-level nodes with children).
     // 检查结构是否有卷容器（带 children 的顶层节点）。
-    let has_volumes = structure
-        .structure
-        .iter()
-        .any(|n| n.children.is_some());
+    let has_volumes = structure.structure.iter().any(|n| n.children.is_some());
 
     if has_volumes {
         // Count leaf nodes in the last volume.
@@ -197,13 +202,21 @@ pub fn compute_next_version(
             // New chapter: keep X, Y = latest chapter number, Z = 0.
             // 新章节：保持 X, Y = 最新章节编号, Z = 0。
             let chapter_num = find_latest_chapter_number(structure);
-            let volume = if current.volume == 0 { 1 } else { current.volume };
+            let volume = if current.volume == 0 {
+                1
+            } else {
+                current.volume
+            };
             UcxVersion::new(volume, chapter_num, 0)
         }
         ChangeKind::ModificationOnly => {
             // Modification only: keep X and Y, Z + 1.
             // 仅修改：保持 X 和 Y, Z + 1。
-            let volume = if current.volume == 0 { 1 } else { current.volume };
+            let volume = if current.volume == 0 {
+                1
+            } else {
+                current.volume
+            };
             let chapter = if current.chapter == 0 {
                 find_latest_chapter_number(structure).max(1)
             } else {
@@ -311,10 +324,7 @@ mod tests {
     fn single_volume_structure(chapter_count: u32) -> Structure {
         let mut chapters = Vec::new();
         for i in 1..=chapter_count {
-            chapters.push(leaf_node(
-                &format!("第{i}章"),
-                &format!("ch-{i:03}.md"),
-            ));
+            chapters.push(leaf_node(&format!("第{i}章"), &format!("ch-{i:03}.md")));
         }
         Structure {
             schema: None,
@@ -330,13 +340,14 @@ mod tests {
             schema: None,
             version: "1.0".to_string(),
             structure: vec![
-                container_node("第一卷", vec![
-                    leaf_node("第一章", "vol1/ch-001.md"),
-                    leaf_node("第二章", "vol1/ch-002.md"),
-                ]),
-                container_node("第二卷", vec![
-                    leaf_node("第一章", "vol2/ch-001.md"),
-                ]),
+                container_node(
+                    "第一卷",
+                    vec![
+                        leaf_node("第一章", "vol1/ch-001.md"),
+                        leaf_node("第二章", "vol1/ch-002.md"),
+                    ],
+                ),
+                container_node("第二卷", vec![leaf_node("第一章", "vol2/ch-001.md")]),
             ],
         }
     }

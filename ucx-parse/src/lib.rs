@@ -363,9 +363,7 @@ impl UcxArchive {
         // Decode as UTF-8 string.
         // 解码为 UTF-8 字符串。
         String::from_utf8(bytes).map_err(|e| {
-            ParseError::Encoding(format!(
-                "chapter '{entry_path}' is not valid UTF-8: {e}"
-            ))
+            ParseError::Encoding(format!("chapter '{entry_path}' is not valid UTF-8: {e}"))
         })
     }
 
@@ -543,10 +541,10 @@ impl UcxArchive {
                 std::fs::create_dir_all(parent)?;
             }
 
-            // Read entry content and write to disk.
-            // 读取条目内容并写入磁盘。
-            let mut buf = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buf)?;
+            // Read entry content (bounded; decompression-bomb guard) and write to disk.
+            // 读取条目内容（有界；解压炸弹防护）并写入磁盘。
+            let declared = entry.size();
+            let buf = read_entry_capped(&mut entry, declared, &entry_name)?;
             std::fs::write(&out_path, &buf)?;
 
             debug!("Extracted: {}", entry_name);
@@ -696,12 +694,10 @@ fn parse_manifest(
         other => other,
     })?;
 
-    let text = String::from_utf8(bytes).map_err(|e| {
-        ParseError::ManifestParse(format!("MANIFEST.MF is not valid UTF-8: {e}"))
-    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|e| ParseError::ManifestParse(format!("MANIFEST.MF is not valid UTF-8: {e}")))?;
 
-    Manifest::from_manifest_str(&text)
-        .map_err(|e| ParseError::ManifestParse(format!("{e}")))
+    Manifest::from_manifest_str(&text).map_err(|e| ParseError::ManifestParse(format!("{e}")))
 }
 
 /// Parse the `metadata/codex.json` entry from the archive.
@@ -715,9 +711,8 @@ fn parse_codex(
         other => other,
     })?;
 
-    let text = String::from_utf8(bytes).map_err(|e| {
-        ParseError::MetadataParse(format!("codex.json is not valid UTF-8: {e}"))
-    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|e| ParseError::MetadataParse(format!("codex.json is not valid UTF-8: {e}")))?;
 
     serde_json::from_str::<Codex>(&text)
         .map_err(|e| ParseError::MetadataParse(format!("codex.json: {e}")))
@@ -734,12 +729,62 @@ fn parse_structure(
         other => other,
     })?;
 
-    let text = String::from_utf8(bytes).map_err(|e| {
-        ParseError::MetadataParse(format!("struct.json is not valid UTF-8: {e}"))
-    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|e| ParseError::MetadataParse(format!("struct.json is not valid UTF-8: {e}")))?;
 
     serde_json::from_str::<Structure>(&text)
         .map_err(|e| ParseError::MetadataParse(format!("struct.json: {e}")))
+}
+
+/// Maximum number of bytes any single ZIP entry may decompress to.
+///
+/// Decompression-bomb guard: a few-KB DEFLATE entry can declare (and expand to)
+/// many GiB. `ZipFile::size()` returns the **attacker-controlled** declared
+/// uncompressed size from the central directory, and the underlying reader puts
+/// no bound on its decompressed output — so reading an entry unbounded (or
+/// pre-allocating `Vec::with_capacity(entry.size())`) is an OOM/DoS vector on the
+/// untrusted-parse path. 512 MiB is far above any legitimate chapter/asset for a
+/// reader yet caps the worst case to a single bounded allocation.
+///
+/// 任何单个 ZIP 条目可解压到的最大字节数。
+/// 解压炸弹防护：数 KB 的 DEFLATE 条目可声明（并膨胀到）数 GiB。`ZipFile::size()`
+/// 返回中央目录里**攻击者可控**的声明解压大小，且底层 reader 对解压输出无上界——
+/// 因此无界读取条目（或 `Vec::with_capacity(entry.size())` 预分配）是不可信解析
+/// 路径上的 OOM/DoS 向量。512 MiB 远高于阅读器任何合法章节/资源，又将最坏情况
+/// 限制为单次有界分配。
+const MAX_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Read a ZIP entry's decompressed bytes with a hard upper bound, defusing
+/// decompression bombs. The declared size is NOT trusted for allocation; the
+/// buffer grows from a small initial capacity and the read is hard-limited to
+/// `MAX_ENTRY_BYTES + 1` so an over-large entry is detected without decompressing
+/// the whole bomb.
+///
+/// 以硬上界读取 ZIP 条目的解压字节，化解解压炸弹。分配**不信任**声明大小；缓冲区
+/// 从较小初始容量增长，读取被硬限制到 `MAX_ENTRY_BYTES + 1`，使超大条目无需解压
+/// 整个炸弹即可被检出。
+fn read_entry_capped<R: std::io::Read>(
+    reader: &mut R,
+    declared_size: u64,
+    entry_name: &str,
+) -> Result<Vec<u8>, ParseError> {
+    // Cap the initial capacity (declared_size is attacker-controlled): start
+    // small and let the Vec grow only as bytes actually arrive.
+    // 限制初始容量（declared_size 攻击者可控）：从小处起，仅随实际到达的字节增长。
+    let initial = declared_size.min(64 * 1024) as usize;
+    let mut buf = Vec::with_capacity(initial);
+    // Read at most MAX_ENTRY_BYTES + 1 bytes; if we hit the +1 the entry exceeds
+    // the cap and is treated as a bomb.
+    // 至多读取 MAX_ENTRY_BYTES + 1 字节；若读到 +1 则条目超限，视为炸弹。
+    let read = reader.take(MAX_ENTRY_BYTES + 1).read_to_end(&mut buf)? as u64;
+    if read > MAX_ENTRY_BYTES {
+        return Err(ParseError::InvalidFormat(format!(
+            "ZIP entry '{entry_name}' decompresses beyond the {MAX_ENTRY_BYTES}-byte limit \
+             (possible decompression bomb) / ZIP 条目 '{entry_name}' 解压超过 \
+             {MAX_ENTRY_BYTES} 字节上限（可能为解压炸弹）"
+        )));
+    }
+    Ok(buf)
 }
 
 /// Read the raw bytes of a ZIP entry by name.
@@ -753,15 +798,14 @@ fn read_entry_bytes(
     name: &str,
 ) -> Result<Vec<u8>, ParseError> {
     let mut entry = archive.by_name(name).map_err(|e| match e {
-        zip::result::ZipError::FileNotFound => {
-            ParseError::MissingFile(name.to_string())
-        }
+        zip::result::ZipError::FileNotFound => ParseError::MissingFile(name.to_string()),
         other => ParseError::Zip(other),
     })?;
 
-    let mut buf = Vec::with_capacity(entry.size() as usize);
-    entry.read_to_end(&mut buf)?;
-    Ok(buf)
+    // Bounded read (decompression-bomb guard); do not trust entry.size().
+    // 有界读取（解压炸弹防护）；不信任 entry.size()。
+    let declared = entry.size();
+    read_entry_capped(&mut entry, declared, name)
 }
 
 // =============================================================================

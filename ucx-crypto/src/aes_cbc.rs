@@ -23,7 +23,7 @@
 //!   HMAC 比较使用常量时间比较，防止时序攻击。
 
 use aes::Aes256;
-use cbc::cipher::{BlockModeEncrypt, BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
+use cbc::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
@@ -103,15 +103,14 @@ pub fn encrypt(
 
     // 2. AES-256-CBC encrypt with PKCS#7 padding.
     //    AES-256-CBC 加密，使用 PKCS#7 填充。
-    let ciphertext = Aes256CbcEnc::new(enc_key.into(), &iv.into())
-        .encrypt_padded_vec::<Pkcs7>(plaintext);
+    let ciphertext =
+        Aes256CbcEnc::new(enc_key.into(), &iv.into()).encrypt_padded_vec::<Pkcs7>(plaintext);
 
     // 3. Compute HMAC-SHA256 over (aad || iv || ciphertext). Including the
     //    aad covers the UCXE header so header-byte swaps are detected.
     //    对 (aad || iv || ciphertext) 计算 HMAC-SHA256。将 aad 纳入覆盖
     //    UCXE 头部，从而可检测头部字节交换攻击。
-    let mut mac = HmacSha256::new_from_slice(mac_key)
-        .expect("HMAC accepts any key size");
+    let mut mac = HmacSha256::new_from_slice(mac_key).expect("HMAC accepts any key size");
     mac.update(aad);
     mac.update(&iv);
     mac.update(&ciphertext);
@@ -161,8 +160,7 @@ pub fn decrypt(
 ) -> Result<Vec<u8>, CryptoError> {
     // 1. Verify HMAC FIRST over (aad || iv || ciphertext) before any decrypt.
     //    首先对 (aad || iv || ciphertext) 验证 HMAC，再进行解密。
-    let mut mac = HmacSha256::new_from_slice(mac_key)
-        .expect("HMAC accepts any key size");
+    let mut mac = HmacSha256::new_from_slice(mac_key).expect("HMAC accepts any key size");
     mac.update(aad);
     mac.update(iv);
     mac.update(ciphertext);

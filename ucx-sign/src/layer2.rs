@@ -239,9 +239,9 @@ pub fn build_signer_data(
     let signed_data_len = 4 + 32 + 4 + cert_der.len();
     let mut signed_data = Vec::with_capacity(signed_data_len);
     signed_data.extend_from_slice(&ALGORITHM_ID_ED25519_BLAKE3.to_le_bytes()); // digest_algorithm_id
-    signed_data.extend_from_slice(digest);                                      // digest
-    signed_data.extend_from_slice(&(cert_der.len() as u32).to_le_bytes());      // cert_length
-    signed_data.extend_from_slice(cert_der);                                    // cert_der
+    signed_data.extend_from_slice(digest); // digest
+    signed_data.extend_from_slice(&(cert_der.len() as u32).to_le_bytes()); // cert_length
+    signed_data.extend_from_slice(cert_der); // cert_der
 
     // --- Sign the signed_data ---
     // 对 signed_data 进行签名。
@@ -316,9 +316,9 @@ pub fn build_signing_block(signers_data: &[u8]) -> Vec<u8> {
     // pair_size = 4(pair_id) + len(signers_data)
     let pair_size = (4 + signers_data.len()) as u64;
     let mut pair_block = Vec::with_capacity(8 + 4 + signers_data.len());
-    pair_block.extend_from_slice(&pair_size.to_le_bytes());              // pair_size
+    pair_block.extend_from_slice(&pair_size.to_le_bytes()); // pair_size
     pair_block.extend_from_slice(&zip_binary::PAIR_ID_UCX_SIG_V1.to_le_bytes()); // pair_id
-    pair_block.extend_from_slice(signers_data);                          // signers_data
+    pair_block.extend_from_slice(signers_data); // signers_data
 
     // --- Calculate size_of_block ---
     // 计算 size_of_block。
@@ -330,10 +330,10 @@ pub fn build_signing_block(signers_data: &[u8]) -> Vec<u8> {
     // 组装完整的块。
     let total_len = 8 + pair_block.len() + 8 + 16;
     let mut block = Vec::with_capacity(total_len);
-    block.extend_from_slice(&size_of_block.to_le_bytes());               // size_of_block (leading)
-    block.extend_from_slice(&pair_block);                                // pair_block
-    block.extend_from_slice(&size_of_block.to_le_bytes());               // size_of_block (trailing)
-    block.extend_from_slice(zip_binary::UCX_SIGNING_BLOCK_MAGIC);        // magic
+    block.extend_from_slice(&size_of_block.to_le_bytes()); // size_of_block (leading)
+    block.extend_from_slice(&pair_block); // pair_block
+    block.extend_from_slice(&size_of_block.to_le_bytes()); // size_of_block (trailing)
+    block.extend_from_slice(zip_binary::UCX_SIGNING_BLOCK_MAGIC); // magic
 
     block
 }
@@ -396,7 +396,7 @@ pub fn parse_signing_block(block_data: &[u8]) -> Result<Vec<SignerEntry>, SignEr
     // Parse pairs until we reach the trailing size_of_block.
     // 解析 pair，直到到达尾部的 size_of_block。
     let pairs_end = magic_start - 8; // Position of trailing size_of_block.
-                                      // 尾部 size_of_block 的位置。
+    // 尾部 size_of_block 的位置。
 
     let mut entries = Vec::new();
 
@@ -531,12 +531,7 @@ fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32, SignError> {
             "unexpected end of data reading u32 at offset {pos}",
         )));
     }
-    let value = u32::from_le_bytes([
-        data[*pos],
-        data[*pos + 1],
-        data[*pos + 2],
-        data[*pos + 3],
-    ]);
+    let value = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
     Ok(value)
 }
@@ -677,8 +672,7 @@ mod tests {
     fn test_signing_block_build_parse_roundtrip() {
         // Generate a key pair and certificate for testing.
         // 生成用于测试的密钥对和证书。
-        let (signing_key, _) =
-            generate_ed25519_keypair().expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         let cert_der = create_self_signed_cert(
             &signing_key,
@@ -703,8 +697,7 @@ mod tests {
 
         // Parse the block back.
         // 解析回签名块。
-        let entries =
-            parse_signing_block(&block).expect("parse_signing_block should succeed");
+        let entries = parse_signing_block(&block).expect("parse_signing_block should succeed");
 
         // Should have exactly 1 signer entry.
         // 应有恰好 1 个签名者条目。
@@ -732,8 +725,7 @@ mod tests {
     /// 测试：build_signer_data 构建的数据可被正确解析。
     #[test]
     fn test_signer_data_build_parse_roundtrip() {
-        let (signing_key, _) =
-            generate_ed25519_keypair().expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
 
         let cert_der = create_self_signed_cert(
             &signing_key,
@@ -754,8 +746,7 @@ mod tests {
 
         // Parse it directly.
         // 直接解析。
-        let entry = parse_signer_data(&signer_data)
-            .expect("parse_signer_data should succeed");
+        let entry = parse_signer_data(&signer_data).expect("parse_signer_data should succeed");
 
         // Verify all fields.
         // 验证所有字段。

@@ -192,9 +192,9 @@ pub fn sign_sf(
 ) -> Result<Vec<u8>, SignError> {
     // --- Sign the SF content with Ed25519 ---
     // 用 Ed25519 签署 SF 内容。
-    let signature = signing_key.try_sign(sf_content).map_err(|e| {
-        SignError::SigningFailed(format!("Ed25519 signing failed: {e}"))
-    })?;
+    let signature = signing_key
+        .try_sign(sf_content)
+        .map_err(|e| SignError::SigningFailed(format!("Ed25519 signing failed: {e}")))?;
     let sig_bytes = signature.to_bytes();
 
     // --- Build the binary blob ---
@@ -258,10 +258,7 @@ pub fn sign_sf(
 /// Returns `SignError::InvalidKey` if the blob is malformed or the
 /// public key cannot be extracted from the certificate.
 /// 如果签名块格式错误或无法从证书中提取公钥，返回 `SignError::InvalidKey`。
-pub fn verify_sf_signature(
-    sf_content: &[u8],
-    ec_data: &[u8],
-) -> Result<VerifySfResult, SignError> {
+pub fn verify_sf_signature(sf_content: &[u8], ec_data: &[u8]) -> Result<VerifySfResult, SignError> {
     // --- Parse the binary blob ---
     // 解析二进制块。
 
@@ -275,19 +272,13 @@ pub fn verify_sf_signature(
 
     // Read signature algorithm id (u32 LE).
     // 读取签名算法 ID（u32 小端）。
-    let algorithm_id = u32::from_le_bytes(
-        ec_data[0..4]
-            .try_into()
-            .expect("slice is exactly 4 bytes"),
-    );
+    let algorithm_id =
+        u32::from_le_bytes(ec_data[0..4].try_into().expect("slice is exactly 4 bytes"));
 
     // Read signature length (u32 LE).
     // 读取签名长度（u32 小端）。
-    let sig_len = u32::from_le_bytes(
-        ec_data[4..8]
-            .try_into()
-            .expect("slice is exactly 4 bytes"),
-    ) as usize;
+    let sig_len =
+        u32::from_le_bytes(ec_data[4..8].try_into().expect("slice is exactly 4 bytes")) as usize;
 
     // Validate that the blob contains enough data for the signature.
     // 验证块中包含足够的签名数据。
@@ -334,16 +325,12 @@ pub fn verify_sf_signature(
 
     // --- Parse the Ed25519 signature ---
     // 解析 Ed25519 签名。
-    let signature = ed25519_dalek::Signature::from_bytes(
-        sig_bytes
-            .try_into()
-            .map_err(|_| {
-                SignError::InvalidKey(format!(
-                    "invalid Ed25519 signature length: expected {ED25519_SIGNATURE_LEN}, got {}",
-                    sig_bytes.len()
-                ))
-            })?,
-    );
+    let signature = ed25519_dalek::Signature::from_bytes(sig_bytes.try_into().map_err(|_| {
+        SignError::InvalidKey(format!(
+            "invalid Ed25519 signature length: expected {ED25519_SIGNATURE_LEN}, got {}",
+            sig_bytes.len()
+        ))
+    })?);
 
     // --- Verify the signature ---
     // 验证签名。
@@ -470,21 +457,15 @@ fn extract_verifying_key_from_cert_der(cert_der: &[u8]) -> Result<VerifyingKey, 
 
     // Parse the DER-encoded X.509 certificate.
     // 解析 DER 编码的 X.509 证书。
-    let cert = x509_cert::Certificate::from_der(cert_der).map_err(|e| {
-        SignError::InvalidKey(format!("failed to parse X.509 certificate: {e}"))
-    })?;
+    let cert = x509_cert::Certificate::from_der(cert_der)
+        .map_err(|e| SignError::InvalidKey(format!("failed to parse X.509 certificate: {e}")))?;
 
     // Extract the raw public key bits from the SubjectPublicKeyInfo.
     // 从 SubjectPublicKeyInfo 中提取原始公钥位。
     let spki = &cert.tbs_certificate.subject_public_key_info;
-    let pk_bytes = spki
-        .subject_public_key
-        .as_bytes()
-        .ok_or_else(|| {
-            SignError::InvalidKey(
-                "subject public key bit string is not byte-aligned".to_string(),
-            )
-        })?;
+    let pk_bytes = spki.subject_public_key.as_bytes().ok_or_else(|| {
+        SignError::InvalidKey("subject public key bit string is not byte-aligned".to_string())
+    })?;
 
     // Ed25519 public keys are exactly 32 bytes.
     // Ed25519 公钥恰好为 32 字节。
@@ -497,9 +478,8 @@ fn extract_verifying_key_from_cert_der(cert_der: &[u8]) -> Result<VerifyingKey, 
 
     // Construct the VerifyingKey from the raw bytes.
     // 从原始字节构建 VerifyingKey。
-    VerifyingKey::from_bytes(&pk_array).map_err(|e| {
-        SignError::InvalidKey(format!("invalid Ed25519 public key: {e}"))
-    })
+    VerifyingKey::from_bytes(&pk_array)
+        .map_err(|e| SignError::InvalidKey(format!("invalid Ed25519 public key: {e}")))
 }
 
 // =============================================================================
@@ -575,8 +555,7 @@ mod tests {
     fn test_sign_verify_roundtrip() {
         // Generate key pair and certificate.
         // 生成密钥对和证书。
-        let (signing_key, _) =
-            generate_ed25519_keypair().expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
         let cert_der = create_self_signed_cert(
             &signing_key,
             &CertOptions {
@@ -616,8 +595,7 @@ mod tests {
     fn test_verify_fails_with_tampered_content() {
         // Generate key pair and certificate.
         // 生成密钥对和证书。
-        let (signing_key, _) =
-            generate_ed25519_keypair().expect("key generation should succeed");
+        let (signing_key, _) = generate_ed25519_keypair().expect("key generation should succeed");
         let cert_der = create_self_signed_cert(
             &signing_key,
             &CertOptions {
@@ -631,8 +609,8 @@ mod tests {
         // Sign original SF content.
         // 签署原始 SF 内容。
         let sf_original = b"Signature-Version: 1.0\nOriginal: true\n";
-        let ec_blob = sign_sf(sf_original, &signing_key, &cert_der)
-            .expect("sign_sf should succeed");
+        let ec_blob =
+            sign_sf(sf_original, &signing_key, &cert_der).expect("sign_sf should succeed");
 
         // Verify with tampered content.
         // 用篡改的内容验证。
@@ -660,8 +638,14 @@ mod tests {
 
         let data = parse_sf(sf_text).expect("parse_sf should succeed");
 
-        assert_eq!(data.signature_version, "1.0", "Signature-Version must be 1.0");
-        assert_eq!(data.hash_algorithm, "BLAKE3", "Hash-Algorithm must be BLAKE3");
+        assert_eq!(
+            data.signature_version, "1.0",
+            "Signature-Version must be 1.0"
+        );
+        assert_eq!(
+            data.hash_algorithm, "BLAKE3",
+            "Hash-Algorithm must be BLAKE3"
+        );
         assert_eq!(data.manifest_digest, "AAAA", "manifest digest must match");
         assert_eq!(
             data.manifest_main_attr_digest, "BBBB",

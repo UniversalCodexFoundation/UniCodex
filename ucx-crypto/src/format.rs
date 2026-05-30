@@ -18,8 +18,8 @@
 //! [Auth Tag: M bytes] (GCM=16, CBC/HMAC=32, ChaCha20=16, no length prefix)
 //! ```
 
-use std::io::{Read, Write, Cursor};
 use crate::{Algorithm, CryptoError, Kdf, UCXE_FORMAT_VERSION, UCXE_MAGIC};
+use std::io::{Cursor, Read, Write};
 
 // =============================================================================
 // Length-field upper bounds / 长度字段上限常量
@@ -221,11 +221,7 @@ impl KdfParams {
 /// 将这些字段绑入 AEAD 标签后，攻击者无法在不破坏认证的情况下篡改其中任何
 /// 一个字段（算法、KDF 选择/参数、分块标志、盐值）。加密端与解密端必须以
 /// 相同输入调用本函数，确保两端的 AAD 逐字节一致。
-pub fn build_aead_aad(
-    header: &UcxeHeader,
-    kdf_params: &KdfParams,
-    salt: &[u8],
-) -> Vec<u8> {
+pub fn build_aead_aad(header: &UcxeHeader, kdf_params: &KdfParams, salt: &[u8]) -> Vec<u8> {
     let header_bytes = header.to_bytes();
     let kdf_bytes = kdf_params.to_bytes();
 
@@ -313,16 +309,31 @@ pub fn write_ucxe(writer: &mut impl Write, file: &UcxeFile) -> Result<(), Crypto
     // 第 1 步：写入 4 字节魔数 "UCXE"。
     writer.write_all(&UCXE_MAGIC)?;
 
-    // Step 2: Write header bytes — version, algorithm ID, KDF ID, reserved.
-    // 第 2 步：写入头部字节 —— 版本、算法 ID、KDF ID、保留位。
-    // Reserved byte bit 0: chunked flag (0x00 = normal, 0x01 = chunked).
-    // 保留字节 bit 0：分块标记（0x00 = 普通，0x01 = 分块）。
-    let reserved = if file.header.chunked { 0x01 } else { 0x00 };
+    // Step 2: Write header bytes — version, algorithm ID, KDF ID, flags.
+    // 第 2 步：写入头部字节 —— 版本、算法 ID、KDF ID、flags。
+    //
+    // Write the FULL `raw_flags` byte (the single source of truth), NOT a value
+    // recomputed from `chunked`. `parse_ucxe` preserves the on-disk flags byte
+    // (incl. reserved bits 1-7) in `raw_flags`, and `UcxeHeader::to_bytes()` uses
+    // `raw_flags` to build the AAD (UCX-FORMAT §7.2/§7.6: the raw flags byte is
+    // bound into the AAD). If write_ucxe instead emitted `if chunked {0x01} else
+    // {0x00}` it would (a) drop reserved bits on a parse→write round-trip — making
+    // serialize∘parse non-byte-identical and silently clearing reserved bits — and
+    // (b) create two divergent sources for the same logical byte (disk vs AAD), a
+    // latent inconsistency. `raw_flags` is kept consistent with `chunked` at
+    // construction time (encrypt sets bit0 = chunked).
+    // 写入**完整的** `raw_flags` 字节（唯一真值），而非从 `chunked` 重算的值。
+    // `parse_ucxe` 把磁盘上的 flags 字节（含保留位 1-7）原样存入 `raw_flags`，且
+    // `UcxeHeader::to_bytes()` 用 `raw_flags` 构造 AAD（UCX-FORMAT §7.2/§7.6：
+    // 原始 flags 字节绑入 AAD）。若 write_ucxe 改用 `if chunked {0x01} else {0x00}`，
+    // 会 (a) 在 parse→write 往返中丢弃保留位——使 serialize∘parse 非字节恒等并静默
+    // 清除保留位；(b) 为同一逻辑字节制造两个分歧来源（磁盘 vs AAD），是潜在不一致。
+    // `raw_flags` 在构造时与 `chunked` 保持一致（加密时 bit0 = chunked）。
     writer.write_all(&[
         file.header.format_version,
         file.header.algorithm.to_u8(),
         file.header.kdf.to_u8(),
-        reserved,
+        file.header.raw_flags,
     ])?;
 
     // Step 3: Write KDF parameters (if KDF is not None).
@@ -489,9 +500,8 @@ fn parse_ucxe_bounded(data: &[u8]) -> Result<UcxeFile, CryptoError> {
     let algorithm = Algorithm::from_u8(algo_id).ok_or_else(|| {
         CryptoError::UnsupportedAlgorithm(format!("unknown algorithm ID: {:#04X}", algo_id))
     })?;
-    let kdf = Kdf::from_u8(kdf_id).ok_or_else(|| {
-        CryptoError::InvalidFormat(format!("unknown KDF ID: {:#04X}", kdf_id))
-    })?;
+    let kdf = Kdf::from_u8(kdf_id)
+        .ok_or_else(|| CryptoError::InvalidFormat(format!("unknown KDF ID: {:#04X}", kdf_id)))?;
 
     // Step 3: KDF parameters (variable size by KDF type).
     // 第 3 步：KDF 参数（按 KDF 类型长度不同）。
@@ -729,8 +739,7 @@ mod tests {
     // =========================================================================
     #[test]
     fn test_ucxe_round_trip_chacha20() {
-        let original =
-            make_test_file(Algorithm::ChaCha20Poly1305, Kdf::None, KdfParams::None);
+        let original = make_test_file(Algorithm::ChaCha20Poly1305, Kdf::None, KdfParams::None);
         let bytes = serialize_ucxe(&original).expect("serialize should succeed");
         let parsed = parse_ucxe(&bytes).expect("parse should succeed");
         assert_files_equal(&original, &parsed);
@@ -782,7 +791,9 @@ mod tests {
         let original = make_test_file(
             Algorithm::Aes256Gcm,
             Kdf::Pbkdf2HmacSha256,
-            KdfParams::Pbkdf2 { iterations: 600_000 },
+            KdfParams::Pbkdf2 {
+                iterations: 600_000,
+            },
         );
         let bytes = serialize_ucxe(&original).expect("serialize should succeed");
         let parsed = parse_ucxe(&bytes).expect("parse should succeed");
