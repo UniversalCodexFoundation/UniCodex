@@ -1,8 +1,30 @@
 # Unicodex 待办事项（未完成行动项）
 
-> 更新时间：2026-04-18
-> 来源：v0.4.0-alpha.2 回归测试报告（`test/problems/0.4.0-alpha.2.md`，commit 4db8c92）+ 后续收尾修复 259aecb / 05dd1f0
+> 更新时间：2026-05-31
+> 来源：v0.4.0-alpha.2 回归测试报告（`test/problems/0.4.0-alpha.2.md`，commit 4db8c92）+ 后续收尾修复 259aecb / 05dd1f0 + 安全审查修复 5e47c67
 > 范围：本文件**仅**记录未完成行动项。编年史见 [memory/progress.md](memory/progress.md)，决策原因见 [memory/decisions.md](memory/decisions.md)，模块状态见 [memory/modules.md](memory/modules.md)，前瞻计划见 [plan/roadmap.md](plan/roadmap.md)。
+
+---
+
+## 〇、安全审查修复（2026-05-31，commit 5e47c67，待回归）
+
+> 全仓库安全审查 + 实机入侵测试发现并已修复，均有单元测试 + 真实 CLI 端到端再验证。需在下个版本回归后关闭。详见 [memory/decisions.md](memory/decisions.md) ADR-013、[memory/progress.md](memory/progress.md)。
+
+| 编号 | 问题 | 严重度 | 修复 |
+|------|------|--------|------|
+| C-1 | `ucx unpack` Zip-Slip 任意文件写（盘符/反斜杠绝对路径绕过 extract_to 守卫） | Critical | 共享校验器 `ucx-types::path_safety`，生产/消费两侧统一委托 |
+| H-1 | 零分块(`chunk_count==0`)UCXE 任意密钥下报告解密成功（未验证 AEAD tag） | High | `deserialize_chunks`/`decrypt_chunked` 双重拒绝 0 |
+| M-1 | 证书 CN 含控制字符 -> 信任展示伪造（cert info / verify --show-signers） | Medium | 创建时校验 CN + 展示侧 `sanitize_for_display` |
+| M-2 | `unicodex.toml` 未知/拼写错误字段静默接受（**闭合旧 NEW-R3-01**） | Medium | `ProjectConfig` 及各段加 `deny_unknown_fields` |
+| M-3 | `struct.json` 无大小/节点/深度上限（解析放大 DoS，76MB→589MB） | Medium | 大小≤16MiB、节点≤100k、深度≤64 上限 |
+| L-1 | 路径未显式拒绝 NUL/控制字符（**file 引用**部分；title 见下） | Low | 共享校验器覆盖 |
+| L-2 | 空/纯空白证书 CN 被接受 | Low | 并入 M-1 校验 |
+
+**本轮新增的后续待办**（非阻塞）：
+- `AUD-01` `struct.json` 的 **`title` 字段** NUL/控制字符仍未校验（旧 NEW-R3-02 的剩余部分，仅 file 引用已覆盖）。Low。
+- `AUD-02` `codex.json`/`struct.json` 类型（`Codex`/`Structure`/`StructureNode` 等）的 `deny_unknown_fields`：需先核对 docs/02 规范字段完备性，避免拒绝合法/扩展字段。Medium（一致性）。
+- `AUD-03` `ucx-version` 的 struct.json/snapshot 读取路径同样施加大小/节点上限（与 M-3 对齐）。Low。
+- `AUD-04` 输出父目录自动创建在各子命令间不一致（统一 `create_dir_all(parent)` 或统一报错并在 docs 记录约定）。Low（一致性/UX）。
 
 ---
 
@@ -23,8 +45,8 @@
 
 | 编号 | 组 | 问题 | 严重度 |
 |------|----|------|--------|
-| NEW-R3-01 | R3 | `unicodex.toml` 未知字段静默接受（拼写错误被吞） | Medium |
-| NEW-R3-02 | R3 | `struct.json` title 含 NUL 字节静默接受（跨平台显示风险） | Medium |
+| ~~NEW-R3-01~~ | R3 | ~~`unicodex.toml` 未知字段静默接受~~ → **已修复**（见 §〇 M-2，commit 5e47c67） | ~~Medium~~ |
+| NEW-R3-02 | R3 | `struct.json` **title** 含 NUL 字节静默接受（file 引用已由 §〇 L-1 拒绝；title 仍待，见 AUD-01） | Low（已降级） |
 | NEW-R1-02 | R1 | docs 承诺 `ucx sign` 自动读 toml `[signing]`，实测需显式 `-k`/`-c`（文档领先实现） | Minor |
 | NEW-R1-03 | R1 | `docs/errors.md` 仍未创建 | Minor |
 | NEW-R2-02 | R2 | argon2 参数越界与密码错误文案相同（反 oracle 设计权衡） | Low |
@@ -37,7 +59,8 @@
 
 ## 三、v0.4.0-beta.1 候选必修
 
-- **输入校验**：NEW-R3-01（toml 未知字段拒绝/告警）、NEW-R3-02（title NUL 字节拒绝）。
+- **输入校验**：NEW-R3-01 ✅（toml 未知字段，已由 M-2 修复）；NEW-R3-02 剩余 title NUL（AUD-01）。
+- **安全审查修复回归**：§〇 全部（C-1/H-1/M-1/M-2/M-3/L-1/L-2）需纳入下个版本回归测试报告。
 - **文档一致性批**：NEW-R1-02、NEW-R1-03、NEW-R1-04、NEW-R1-05、NEW-R2-04。
 
 ---

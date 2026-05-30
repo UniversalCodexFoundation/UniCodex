@@ -60,7 +60,7 @@ After signing, two more groups appear (see §6):
 | `META-INF/signatures/{SIGNER}.EC` | when signed | Layer 1 Ed25519 blob (§6.1) |
 | `META-INF/certs/{SIGNER}.cert.pem` | when signed | signer cert (PEM); cross-checked against `.EC` (§6.1) |
 
-Path rules: UTF-8, `/` separators, `META-INF/*` names uppercase. Extraction rejects entries containing `..` or starting with `/`. `ucx-parse/src/lib.rs:505-512`
+Path rules: UTF-8, `/` separators, `META-INF/*` names uppercase. Extraction rejects any entry name that is not a **safe relative path** — i.e. it rejects: a `..` segment, a leading `/`, a backslash `\`, a Windows drive-absolute prefix (`C:/`, `C:\`), any `Path::is_absolute` form, a NUL/control character, a Windows reserved device name (CON/PRN/AUX/NUL/COM1-9/LPT1-9), and segments with a trailing dot/space. This prevents Zip-Slip arbitrary file write (`output_dir.join(absolute)` discards the base on Windows). The producer (`ucx-build`) and consumer (`ucx-parse::extract_to`) share one validator: `ucx-types/src/path_safety.rs::validate_safe_relative_path`. `ucx-parse/src/lib.rs:505-518`, `ucx-types/src/path_safety.rs`. **SDKs MUST apply the same rejection rules when extracting.**
 
 ### 2.3 Compression strategy (by extension, lowercased)
 

@@ -117,8 +117,26 @@ git tag 仅 3 个，且均打于 2026-02-16：`v0.0.0-alpha.1` / `v0.1.0-alpha.1
 
 ---
 
+## 2026-05-31 — 全仓库安全审查 + 实机入侵测试 + 修复
+
+对 Rust 工作区（9 crate / ~22.5k LOC）做了一轮授权的大规模安全审查（workflow 多 agent：侦察 + 多维度审查 + 对抗式验证 + 8 类实机入侵测试 + 综合）。实机测试用 debug(带溢出检查)/release 二进制对真实 `ucx` 命令做畸形输入/签名篡改/oracle/资源耗尽攻击，产物隔离于 gitignored `temp_test/audit/`。
+
+**发现并修复（commit `5e47c67`，均经单元测试 + 真实 CLI 端到端再验证）**：
+- **[C-1 Critical]** `ucx unpack` Zip-Slip 任意文件写：`ucx-parse::extract_to` 旧守卫只查 `..`/`/` 开头，放过 Windows 盘符/反斜杠绝对路径（实机已写入 `C:\Windows\Temp`）。修复：抽取共享校验器 `ucx-types::path_safety`，生产/消费两侧统一委托。
+- **[H-1 High]** 零分块(`chunk_count==0`)UCXE 在任意密钥下被报告解密成功（从不验证 AEAD tag）。修复：双重拒绝 `chunk_count==0`。
+- **[M-1/L-2]** 证书 CN 控制字符注入（信任展示伪造）+ 空 CN：创建时校验 + 展示侧 `sanitize_for_display`。
+- **[M-2]** `unicodex.toml` 静默接受未知/拼写错误字段：`ProjectConfig` 及各段加 `deny_unknown_fields`（闭合旧 `NEW-R3-01`）。
+- **[M-3]** `struct.json` 解析放大 DoS：加大小(16MiB)/节点(100k)/深度(64)上限。
+- **[L-1]** 路径未显式拒绝 NUL/控制字符：共享校验器覆盖（闭合旧 `NEW-R3-02`）。
+
+**未触发/确认稳健**（实机）：无 panic/挂起/OOM/错误退出码；crypto 长度字段与 `chunk_count` OOM 上限、防 oracle 统一文案、`signer_id` 白名单、CLI 边界（12 子命令 ~92 用例）均稳健。误报：`main.rs` Base64 密钥 `try_into().unwrap()` 前已校验 `len()==32`。
+
+详见 [decisions.md](./decisions.md) ADR-013、[../TODO.md](../TODO.md)。
+
+---
+
 ## 当前状态 / 下一步
 
-- UCX 标准/工具链：**v0.4.0-alpha.2**，Phase 0–4 完成；git tag 已回补完整（`v0.0.0-alpha.1` → `v0.4.0-alpha.2`）。
+- UCX 标准/工具链：**v0.4.0-alpha.2**，Phase 0–4 完成；git tag 已回补完整（`v0.0.0-alpha.1` → `v0.4.0-alpha.2`）；其后含安全加固 commit `5e47c67`（待下一版本回归）。
 - 生态：Phase 5 多语言 SDK 首批 **14 种**已就绪（均 `v0.4.0`，对应 UCX 标准 0.4.x）。
 - 待办（beta.1 必修、SDK 真机工具链构建验证、官方服务等）见 [../TODO.md](../TODO.md)；阶段与里程碑见 [../plan/roadmap.md](../plan/roadmap.md)。

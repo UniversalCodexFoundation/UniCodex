@@ -84,7 +84,7 @@ unicodex/
    已加入 `.gitignore`。正式测试报告在 `docs/test/problems/`，**勿把 temp_test 当正式产物**。
 4. **加密在签名之前**（Encrypt-then-Sign，ADR-004）：签名保护密文，无需解密即可验签。
 5. **错误文案防 oracle**：解密失败统一返回 `decryption failed`，不泄露具体原因。
-6. **路径与输入安全**：struct.json 拒绝 `../`/绝对路径/Windows 保留名/NUL（部分仍在加固，见 todo）。
+6. **路径与输入安全（共享校验器）**：ZIP 条目名与 struct.json `file` 引用统一经 `ucx-types::path_safety::validate_safe_relative_path` 校验——拒绝 `../`/反斜杠/绝对(含 Windows 盘符)/`Path::is_absolute`/Windows 保留名/NUL 与控制字符/尾随点空格。生产侧（`ucx-build`）与消费侧（`ucx-parse::extract_to`）**共用同一函数**，禁止再各写一份（防漂移，曾导致 Zip-Slip C-1）。详见 ADR-013。`title` 字段 NUL 仍待校验（AUD-01）。
 7. **commit 节奏**：每完成一部分即 commit，conventional commits（`feat/fix/docs/chore` + scope）。
 8. **多语言 SDK 版本号方案**（Phase 5）：SDK 版本 `X.Y.Z` 中 `X.Y` = 所支持的 UCX 标准版本（**前两位相同 ⇒ 对外 API 相同**），`Z` = SDK 自身补丁号；旧标准线持续发补丁、不废弃（类 Python 多版本并行）。当前全部 SDK 初始版本 = **v0.4.0**（对应 UCX 标准 0.4.x）。详见 [memory/decisions.md](memory/decisions.md) ADR-012。
 

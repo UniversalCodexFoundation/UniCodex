@@ -324,4 +324,28 @@ SDK 版本号为 `X.Y.Z`：
 
 ---
 
-*后续决策追加于此（ADR-013…）。*
+## ADR-013: 安全加固——共享路径校验器 + 审查发现修复
+
+**日期**：2026-05-31 · **状态**：已决定（commit `5e47c67`）
+
+**背景**：
+一次授权的全仓库安全审查 + 实机入侵测试（workflow，2026-05-31）发现：消费侧 `ucx-parse::extract_to` 的 ZIP 条目名校验远弱于生产侧 `ucx-build::validate_structure_file_path`（仅查 `..` 与以 `/` 开头），放过 Windows 盘符/反斜杠绝对路径，构成 **Zip-Slip 任意文件写**（Critical，实机已复现写入 `C:\Windows\Temp`）。同时发现零分块 UCXE 解密绕过（High）、证书 CN 注入（Medium）等。根因共性是**同一安全语义在不同入口加固不一致**（消费侧弱于生产侧、CN 弱于 signer_id）。
+
+**决定**：
+1. 抽取**唯一真实来源**的共享路径校验器 `ucx-types::path_safety::validate_safe_relative_path`，生产侧（`ucx-build`）与消费侧（`ucx-parse::extract_to`）统一委托，杜绝漂移。拒绝：空串/反斜杠/绝对(含盘符)/`Path::is_absolute` 兜底/`..` 段/Windows 保留名/NUL 与控制字符/尾随点空格。错误信息对路径做 `escape_debug` 转义，使错误本身不构成注入。
+2. AEAD 不变量：分块密文 `chunk_count` 恒 `>= 1`，于 `deserialize_chunks` 与 `decrypt_chunked` 双重拒绝 `0`，杜绝"未认证文件被报告为解密成功"。
+3. 信任面一致性：证书 CN/organization 在创建时拒绝控制字符与空 CN（与 `signer_id` 白名单对齐）；展示侧 `sanitize_for_display` 对外部证书 CN 单行净化（纵深防御）。
+4. 输入严格性：`ProjectConfig` 及各段加 `#[serde(deny_unknown_fields)]`（`unicodex.toml` 拼写错误报错）；`struct.json` 加大小/节点数/深度上限（防解析放大 DoS）。
+
+**理由**：
+- "同一安全语义必须在所有入口对齐"——共享校验函数从结构上消除"一处严一处松"的漂移类缺陷（这是本次多个发现的共同根因）。
+- 符合 CLAUDE.md"可追溯/可验证/可解释"：每条修复均有单元测试 + 真实 ucx CLI 端到端再验证（pre-fix 可复现、post-fix 全拒绝）。
+
+**影响**：
+- `ucx-build` 删除重复的路径校验逻辑；今后路径安全规则只在 `ucx-types::path_safety` 一处维护。
+- **各语言 SDK 在解包时必须应用相同的条目名拒绝规则**（已更新 `sdk/UCX-FORMAT.md §2.2`）。
+- `codex.rs`/`structure.rs` 的 `deny_unknown_fields` 暂缓（需先核对规范字段完备性，避免拒绝合法/扩展字段），列入待办。
+
+---
+
+*后续决策追加于此（ADR-014…）。*
