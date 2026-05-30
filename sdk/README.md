@@ -30,7 +30,7 @@
 | Swift | [`swift/`](swift/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | swift-crypto + 纯 Swift BLAKE3/Argon2/DEFLATE |
 | Dart | [`dart/`](dart/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | `cryptography` 包 + 纯 Dart BLAKE3/DER |
 | ArkTS | [`arkts/`](arkts/) | L3 | ✅ 外部核验² | ⏸ 无工具链 | **100% 纯 ArkTS**（HarmonyOS，无原生 crypto 依赖） |
-| Cangjie (仓颉) | [`cangjie/`](cangjie/) | L3³ | ✅ 外部核验¹ | ⏸ 无工具链 | 纯仓颉 + stdx.crypto.digest(SHA256/512) |
+| Cangjie (仓颉) | [`cangjie/`](cangjie/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | 纯仓颉 + stdx.crypto.digest(SHA256/512)（v0.4.1，含分块解密 + 证书时效） |
 
 **构建/测试状态说明**：
 
@@ -38,7 +38,6 @@
 - **⏸ 无工具链**：宿主 Windows 环境无该语言工具链，未实跑；但所有 load-bearing 算法均经**逐位外部核验**——
   - ¹ 将该 SDK 的算法逻辑 1:1 移植到 Python/Node，对照参考库与真实夹具验证（fingerprint `c7eda2f7…44219d0`、三种解密往返、篡改拒绝）。
   - ² ArkTS 提供 8 个 Node(.cjs) 逐行对照脚本（BLAKE3/SHA-512/BLAKE2b/Argon2id/Ed25519/AES-GCM/ChaCha20/Layer1+Layer2 KAT），全部通过。
-  - ³ Cangjie 当前两点已知缺口（见其 README）：分块 UCXE 解密（明文 >64 MiB）未实现（抛 Unsupported）；签名验证**未强制**证书 notBefore/notAfter 有效期窗口（Ed25519 签名链与摘要链仍严格校验）。
 
 > 无工具链的 SDK 代码完整、可被装有对应工具链的环境直接构建；任何编译错误应视为待修缺陷。
 
@@ -46,12 +45,12 @@
 
 ## 版本号方案（ADR-012）
 
-所有 SDK 统一采用 `X.Y.Z` 版本号，当前版本均为 **`0.4.0`**：
+所有 SDK 统一采用 `X.Y.Z` 版本号，均对应 UCX 标准 **`0.4.x`**（首批 `0.4.0`；Cangjie 已发补丁 **`0.4.1`**）：
 
 - **`X.Y`**（前两位）= 所支持的 **UCX 标准版本**（major.minor）。**前两位相同 ⇒ 支持同一 UCX 标准、对外 API 相同**。
-- **`Z`**（末位）= 该 SDK 自身的补丁号（修 bug、不改对外 API）。
+- **`Z`**（末位）= 该 SDK 自身的补丁号（修 bug、不改对外 API）。各 SDK 的 `Z` 互相独立递增。
 
-`0.4.0` 对应 UCX 标准 **0.4.x**。UCX 标准升级到下一 minor（如 0.5）时新增 `0.5.x` SDK 线，旧 `0.4.x` 线**持续发布补丁、不被废弃**（类似 Python 多版本系列并行维护）。详见 [`../docs/memory/decisions.md`](../docs/memory/decisions.md) ADR-012。
+`0.4.x` 对应 UCX 标准 **0.4.x**。UCX 标准升级到下一 minor（如 0.5）时新增 `0.5.x` SDK 线，旧 `0.4.x` 线**持续发布补丁、不被废弃**（类似 Python 多版本系列并行维护）。详见 [`../docs/memory/decisions.md`](../docs/memory/decisions.md) ADR-012。
 
 ---
 
