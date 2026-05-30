@@ -28,7 +28,7 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 | 顶层 CLI 子命令 | **12 个** | `unicodex-core/src/main.rs` `enum Commands` |
 | 编译状态 | `cargo build` 通过，无 error/warning | 2026-04-18 实测 |
 
-**Phase 进度**：Phase 0–4 **全部已完成**；Phase 5（生态建设）**进行中**——多语言只读 SDK 首批 **14 种**已就绪（见 [../sdk/README.md](../sdk/README.md)，均 v0.4.0）。
+**Phase 进度**：Phase 0–4 **全部已完成**；Phase 5（生态建设）**进行中**——多语言只读 SDK 首批 **14 种**已就绪（见 [../sdk/README.md](../sdk/README.md)，对应 UCX 标准 0.4.x；首批 v0.4.0，Cangjie 已发补丁 **v0.4.1**：补全分块 UCXE 解密 + 证书有效期窗口校验）。
 **⚠️ 无任何 placeholder crate**——Phase 2/3/4 的 ucx-version/sign/verify/crypto 均为生产实现。
 
 ---
