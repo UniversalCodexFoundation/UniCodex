@@ -25,21 +25,18 @@
 | C# | [`csharp/`](csharp/) | L3 | ✅ 10/10 | ✅ .NET 8 | `Blake3` + BouncyCastle + Konscious Argon2 |
 | Kotlin | [`kotlin/`](kotlin/) | L3 | ✅ 10/10 | ✅ JDK21+Gradle | BouncyCastle + JCE |
 | C++ | [`cpp/`](cpp/) | L3 | ✅ 10/10 | ✅ cmake | BLAKE3 C + libsodium + mbedtls/OpenSSL |
-| Ruby | [`ruby/`](ruby/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | OpenSSL + `argon2` gem + 纯 Ruby BLAKE3/ZIP |
-| PHP | [`php/`](php/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | ext-sodium/openssl + 纯 PHP BLAKE3/Argon2 |
-| Swift | [`swift/`](swift/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | swift-crypto + 纯 Swift BLAKE3/Argon2/DEFLATE |
-| Dart | [`dart/`](dart/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | `cryptography` 包 + 纯 Dart BLAKE3/DER |
-| ArkTS | [`arkts/`](arkts/) | L3 | ✅ 外部核验² | ⏸ 无工具链 | **100% 纯 ArkTS**（HarmonyOS，无原生 crypto 依赖） |
-| Cangjie (仓颉) | [`cangjie/`](cangjie/) | L3 | ✅ 外部核验¹ | ⏸ 无工具链 | 纯仓颉 + stdx.crypto.digest(SHA256/512)（v0.4.1，含分块解密 + 证书时效） |
+| Ruby | [`ruby/`](ruby/) | L3 | ✅ 11/11 | ✅ Ruby 3.4.4 | OpenSSL + `argon2` gem + 纯 Ruby BLAKE3/ZIP |
+| PHP | [`php/`](php/) | L3 | ✅ 26/26 | ✅ PHP 8.4.8 | ext-sodium/openssl + 纯 PHP BLAKE3/Argon2 |
+| Swift | [`swift/`](swift/) | L3 | ✅ 12/12 | ✅ Swift 6.3.2 | swift-crypto + 纯 Swift BLAKE3/Argon2/DEFLATE |
+| Dart | [`dart/`](dart/) | L3 | ✅ 25/25 | ✅ Dart 3.8.0 | `cryptography` 包 + 纯 Dart BLAKE3/DER |
+| ArkTS | [`arkts/`](arkts/) | L3 | ✅ 8/8 | ✅ Node.js + HAR | **100% 纯 ArkTS**（HarmonyOS，无原生 crypto 依赖） |
+| Cangjie (仓颉) | [`cangjie/`](cangjie/) | L3 | ✅ 10/10 | ✅ cjc 1.0.5 / cjpm 0.5.0 | 纯仓颉 + stdx.crypto.digest(SHA256/512)（v0.4.1，含分块解密 + 证书时效） |
 
 **构建/测试状态说明**：
 
-- **本机构建 ✅**：宿主机装有该工具链，已实际 `build` + 跑 T1–T10 一致性测试全过（8 种）。
-- **⏸ 无工具链**：宿主 Windows 环境无该语言工具链，未实跑；但所有 load-bearing 算法均经**逐位外部核验**——
-  - ¹ 将该 SDK 的算法逻辑 1:1 移植到 Python/Node，对照参考库与真实夹具验证（fingerprint `c7eda2f7…44219d0`、三种解密往返、篡改拒绝）。
-  - ² ArkTS 提供 8 个 Node(.cjs) 逐行对照脚本（BLAKE3/SHA-512/BLAKE2b/Argon2id/Ed25519/AES-GCM/ChaCha20/Layer1+Layer2 KAT），全部通过。
+- **本机构建 ✅**：宿主机装有该工具链，已实际 `build` + 跑一致性测试全过。全部 14 种 SDK 均已通过真实工具链验证。
 
-> 无工具链的 SDK 代码完整、可被装有对应工具链的环境直接构建；任何编译错误应视为待修缺陷。
+> 所有 SDK 代码完整且已通过本机工具链实际构建与测试；任何编译错误应视为待修缺陷。
 
 ---
 
