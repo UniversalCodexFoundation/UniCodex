@@ -127,8 +127,7 @@
     - **Swift** 6.3.2: 12/12 PASS（修复 ZIPFoundation 依赖 + SDKROOT + Data 类型转换）
     - **Dart** 3.8.0: 25/25 PASS（修复 strict-casts + 泛型类型）
     - **Cangjie** (cjc 1.0.5): 10/10 PASS（修复 Poly1305 hibit 移位、wrapping 算术、API 适配）
-    - **ArkTS** (DevEco 5.0): Node.js 验证 8/8 PASS，HAR 项目结构已修复；ArkTS 编译器仍有 24 个源码合规性错误待修复
-  - 待办：ArkTS 24 个编译错误（errors.ets prototype 模式、archive.ets any/unknown 类型、types.ets 循环类型别名、@ohos.file.fs API 适配）。
+    - **ArkTS** (DevEco 5.0): Node.js 验证 8/8 PASS，HAR 构建 BUILD SUCCESSFUL（0 errors）
   - 增强（远期）：各 SDK 可加写入/签名/加密能力（当前仅只读）。
 - **官方服务**：SVC-001 密钥分发、SVC-002 身份验证 / CA、SVC-003 包验证、SVC-004 阅读器集成 API。
 

@@ -40,10 +40,10 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 | Swift | 6.3.2 (Windows MSVC) | 12/12 PASS | 已验证 |
 | Dart | 3.8.0 | 25/25 PASS | 已验证 |
 | Cangjie | cjc 1.0.5 / cjpm 0.5.0 | 10/10 PASS | 已验证（t9 Argon2id ~52s，性能待优化） |
-| ArkTS | DevEco 5.0 / hvigor 6.22.3 | Node.js 8/8 PASS | 部分（HAR 编译有 24 个 ArkTS 源码合规错误） |
+| ArkTS | DevEco 5.0 / hvigor 6.22.3 | Node.js 8/8 PASS + HAR BUILD SUCCESSFUL | 已验证 |
 
 **Cangjie 关键修复**：Poly1305 hibit 移位 `<<16` -> `<<24`（h4 从 bit 104 起，block[16] 表示 bit 128，偏移=24）。
-**ArkTS 待办**：errors.ets 需 ArkTS 合规错误类模式；archive.ets 需替换 any/unknown 类型 + @ohos.file.fs API；types.ets 需消除循环类型别名。
+**ArkTS 关键修复**：移除 Object.setPrototypeOf（14 errors）；JsonValue 改 Object|null 消除循环类型别名（2 errors）；动态 import 改静态 import fileIo（8 errors）。
 
 ---
 
