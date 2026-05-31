@@ -31,6 +31,20 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 **Phase 进度**：Phase 0–4 **全部已完成**；Phase 5（生态建设）**进行中**——多语言只读 SDK 首批 **14 种**已就绪（见 [../sdk/README.md](../sdk/README.md)，对应 UCX 标准 0.4.x；首批 v0.4.0，Cangjie 已发补丁 **v0.4.1**：补全分块 UCXE 解密 + 证书有效期窗口校验）。
 **⚠️ 无任何 placeholder crate**——Phase 2/3/4 的 ucx-version/sign/verify/crypto 均为生产实现。
 
+### 2026-05-31 SDK 本机构建验证（6 SDK 全部完成）
+
+| SDK | 工具链版本 | 测试结果 | 状态 |
+|-----|-----------|----------|------|
+| Ruby | 3.4.4 | 11/11 PASS | 已验证 |
+| PHP | 8.4.8 | 26/26 PASS | 已验证 |
+| Swift | 6.3.2 (Windows MSVC) | 12/12 PASS | 已验证 |
+| Dart | 3.8.0 | 25/25 PASS | 已验证 |
+| Cangjie | cjc 1.0.5 / cjpm 0.5.0 | 10/10 PASS | 已验证（t9 Argon2id ~52s，性能待优化） |
+| ArkTS | DevEco 5.0 / hvigor 6.22.3 | Node.js 8/8 PASS | 部分（HAR 编译有 24 个 ArkTS 源码合规错误） |
+
+**Cangjie 关键修复**：Poly1305 hibit 移位 `<<16` -> `<<24`（h4 从 bit 104 起，block[16] 表示 bit 128，偏移=24）。
+**ArkTS 待办**：errors.ets 需 ArkTS 合规错误类模式；archive.ets 需替换 any/unknown 类型 + @ohos.file.fs API；types.ets 需消除循环类型别名。
+
 ---
 
 ## 3. 记忆地图（去哪里找什么）
