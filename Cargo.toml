@@ -76,7 +76,7 @@ blake3 = "1.8"                                       # High-performance hash fun
 # --- Cryptography / 密码学 ---
 ed25519-dalek = { version = "2.2", features = ["rand_core", "pkcs8", "pem"] }  # Ed25519 signatures with PKCS#8 + PEM support / Ed25519 签名（含 PKCS#8 + PEM 支持）
 rand = "0.8"                                         # Random number generation / 随机数生成
-pkcs8 = { version = "0.10", features = ["pem", "std"] }  # PKCS#8 private key encoding / PKCS#8 私钥编码
+pkcs8 = { version = "0.11", features = ["pem", "std"] }  # PKCS#8 private key encoding / PKCS#8 私钥编码
 pem-rfc7468 = "0.7"                                  # PEM encoding (RFC 7468) / PEM 编码（RFC 7468）
 sha2 = "0.10"                                        # SHA-2 hash functions / SHA-2 哈希函数
 rcgen = "0.13"                                       # X.509 certificate generation / X.509 证书生成
