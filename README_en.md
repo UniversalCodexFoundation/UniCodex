@@ -42,6 +42,20 @@ unicodex/
 
 ## Quick Start
 
+### Clone the Repository
+
+This repo references 14 SDK sub-repos via git submodules. Use `--recurse-submodules` when cloning:
+
+```bash
+git clone --recurse-submodules https://github.com/UniversalCodexFoundation/UniCodex.git
+```
+
+If already cloned with empty SDK directories, fetch them with:
+
+```bash
+git submodule update --init --recursive
+```
+
 ### Requirements
 
 - Rust 1.85+ (edition 2024)

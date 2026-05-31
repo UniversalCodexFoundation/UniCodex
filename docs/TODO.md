@@ -122,13 +122,29 @@
 - **多语言 SDK**：✅ 首批 **14 种**只读阅读器 SDK 已就绪（对应 UCX 标准 0.4.x；首批 v0.4.0，Cangjie 已发补丁 **v0.4.1**）：Rust/Go/Python/TypeScript/Java/C#/Kotlin/C++/Ruby/PHP/Swift/Dart/ArkTS/Cangjie。原 SDK-001~003（go/py/js）已并入（无单独 js 版——TypeScript SDK 双产物 ESM/CJS 即 JS 可用）。
   - ✅ 已完成：Cangjie 补实现 分块(>64 MiB) UCXE 解密 + 证书有效期窗口校验（v0.4.1，真实 CLI ground truth + Python 端口逐位核验；见其 README）。
   - ✅ **2026-05-31 本机构建验证完成**：全部 SDK 在 Windows 11 环境完成真机构建 + T1-T10 回归
-  - ✅ **2026-05-31 全维度审计 + 全量修复完成**：187 个发现，104 个修复已应用，18/19 测试通过：
+  - ✅ **2026-05-31 全维度审计 + 全量修复完成**：187 个发现，104 个修复已应用，19/19 测试通过：
     - **P0 安全修复**：chunk AAD 绑定 chunk_count（全 13 SDK）、Zip-Slip 路径验证（全 13 SDK）、Kotlin PBKDF2 UTF-8 编码
     - **P1 改进**：密钥清零、constantTimeEquals、T5 certType 断言、EOCD 验证、C++ 多签名者、Python context manager
     - **P2 增强**：Codex 数据模型补全、Dart 依赖清理/命名修复、PHP 32 位检查、PKCS#7 常量时间、溢出检查
-    - 验证：Go 13/13, Python 14/14, TypeScript 15/15, Dart 25/25, Java 11/11, Ruby 11/11, PHP 26/26, Swift 12/12, Cangjie 10/10, ArkTS 8/8+HAR（Kotlin 因 Gradle 网络超时未验证）
+    - 验证：Go 13/13, Python 14/14, TypeScript 15/15, Dart 25/25, Java 11/11, Kotlin 12/12, Ruby 11/11, PHP 26/26, Swift 12/12, Cangjie 10/10, ArkTS 8/8+HAR
+  - **2026-05-31 第二轮跨模型审计**（Sonnet 14 并行 agent + Opus 6 并行对抗验证）：195 个发现，16 critical/high **全部 CONFIRMED（零误报）**：
+    - **CRITICAL**: Swift `UInt64->Int` trap crash（SignatureVerifier.swift:200,218）-- 无需认证即可触发进程崩溃
+    - **HIGH (P0)**: Go Argon2 uint8 截断（decrypt.go:129）、Go L2 pairSize 整数溢出（verify.go:426）、Ruby Argon2 wrapper 忽略 parallelism（crypto.rb:424）、Ruby ZipReader nil 解引用（zip_reader.rb:278）、Swift CBC+chunked 未拒绝（Ucxe.swift:257）、Swift AEAD key 副本未清零（Ucxe.swift:297）、Swift zip bomb 无解压上限（Inflate.swift:108）
+    - **HIGH (non-CT digest)**: 全 14 SDK 的 BLAKE3 digest 比较不是常量时间（integrity/signature 路径）
+    - **系统性**: 8+ SDK 缺 Argon2 parallelism 上限(255)、5+ SDK L2 pairSize 下溢未检查、5+ SDK chunk_count 无上界
+    - 详见 [memory/sdk-audit-codex-2026-05-31.md](memory/sdk-audit-codex-2026-05-31.md)
+    - **全量修复已完成**（101 fixes committed across 14 SDKs）：8/14 测试通过（Go/Python/Java/C++/TypeScript/ArkTS/Rust/Ruby），6 个因工具链不在 PATH 未验证（Swift/Dart/Kotlin/C#/PHP/Cangjie，代码已 commit）
   - 增强（远期）：各 SDK 可加写入/签名/加密能力（当前仅只读）。
 - **官方服务**：SVC-001 密钥分发、SVC-002 身份验证 / CA、SVC-003 包验证、SVC-004 阅读器集成 API。
+
+---
+
+## 6.1、SDK 发布阻塞项
+
+| 编号 | 问题 | 影响 | 前置条件 |
+|------|------|------|----------|
+| SDK-PUB-001 | Rust SDK facade 依赖父 workspace crate（path 引用），独立仓库无法编译 | 无法发布到 crates.io、CI 仅能做 fmt 检查 | 需先将 `ucx-types`/`ucx-parse`/`ucx-verify`/`ucx-crypto` 发布到 crates.io，然后 Cargo.toml 改为 `version + path` 双声明 |
+| SDK-PUB-002 | PyPI 包名 `unicodex` 已被第三方占用（unicode 编解码工具） | Python SDK 无法以当前名称发布 | 改名为 `unicodex-ucx` 或 `ucx-reader`，同步更新 pyproject.toml 和 README |
 
 ---
 

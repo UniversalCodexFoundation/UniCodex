@@ -41,6 +41,20 @@ unicodex/
 
 ## 快速开始
 
+### 克隆仓库
+
+本仓库通过 git submodule 引用 14 个 SDK 子仓库。克隆时需加 `--recurse-submodules` 以同步拉取：
+
+```bash
+git clone --recurse-submodules https://github.com/UniversalCodexFoundation/UniCodex.git
+```
+
+已克隆但 SDK 目录为空时，补充拉取：
+
+```bash
+git submodule update --init --recursive
+```
+
 ### 环境要求
 
 - Rust 1.85+（edition 2024）
