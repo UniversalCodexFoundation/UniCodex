@@ -1,5 +1,3 @@
-<!-- SPDX-License-Identifier: MIT -->
-
 [English](README_en.md) | 中文
 
 # Unicodex
