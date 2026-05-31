@@ -1,0 +1,42 @@
+[submodule "sdk/arkts"]
+	path = sdk/arkts
+	url = https://github.com/UniversalCodexFoundation/ucx-arkts-sdk.git
+[submodule "sdk/cangjie"]
+	path = sdk/cangjie
+	url = https://github.com/UniversalCodexFoundation/ucx-cangjie-sdk.git
+[submodule "sdk/cpp"]
+	path = sdk/cpp
+	url = https://github.com/UniversalCodexFoundation/ucx-cpp-sdk.git
+[submodule "sdk/csharp"]
+	path = sdk/csharp
+	url = https://github.com/UniversalCodexFoundation/ucx-csharp-sdk.git
+[submodule "sdk/dart"]
+	path = sdk/dart
+	url = https://github.com/UniversalCodexFoundation/ucx-dart-sdk.git
+[submodule "sdk/go"]
+	path = sdk/go
+	url = https://github.com/UniversalCodexFoundation/ucx-go-sdk.git
+[submodule "sdk/java"]
+	path = sdk/java
+	url = https://github.com/UniversalCodexFoundation/ucx-java-sdk.git
+[submodule "sdk/kotlin"]
+	path = sdk/kotlin
+	url = https://github.com/UniversalCodexFoundation/ucx-kotlin-sdk.git
+[submodule "sdk/php"]
+	path = sdk/php
+	url = https://github.com/UniversalCodexFoundation/ucx-php-sdk.git
+[submodule "sdk/python"]
+	path = sdk/python
+	url = https://github.com/UniversalCodexFoundation/ucx-python-sdk.git
+[submodule "sdk/ruby"]
+	path = sdk/ruby
+	url = https://github.com/UniversalCodexFoundation/ucx-ruby-sdk.git
+[submodule "sdk/rust"]
+	path = sdk/rust
+	url = https://github.com/UniversalCodexFoundation/ucx-rust-sdk.git
+[submodule "sdk/swift"]
+	path = sdk/swift
+	url = https://github.com/UniversalCodexFoundation/ucx-swift-sdk.git
+[submodule "sdk/typescript"]
+	path = sdk/typescript
+	url = https://github.com/UniversalCodexFoundation/ucx-typescript-sdk.git

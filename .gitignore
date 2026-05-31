@@ -24,7 +24,5 @@ Desktop.ini
 # 正式测试报告已归档至 docs/test/problems/，此目录无需纳入版本控制
 temp_test/
 
-# 多语言 SDK：每个 sdk/<lang>/ 是独立子仓库（单独开源），父仓库不跟踪其内容，
-# 仅保留索引(sdk/README.md)、wire-format 规范(sdk/UCX-FORMAT.md)与共享夹具(sdk/testdata/)。
-/sdk/*/
-!/sdk/testdata/
+# 多语言 SDK：每个 sdk/<lang>/ 作为 git submodule 引用独立开源仓库。
+# 父仓库通过 .gitmodules 跟踪各 SDK 的 commit 引用（GitHub 显示为蓝色链接目录）。
