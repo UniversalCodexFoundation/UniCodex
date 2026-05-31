@@ -130,8 +130,14 @@ pub fn encrypt_paragraph(
     //    Each engine returns (ciphertext, nonce, tag) separately.
     //    使用相应的 AEAD 引擎加密。
     //    每个引擎分别返回 (密文, nonce, tag)。
-    // Paragraph-level encryption has no framing header, so no AAD is bound.
-    // 段落级加密无外层 header，故无 AAD 绑定。
+    // TODO(security): Bind paragraph context data (e.g., file path, paragraph
+    // index) into AAD instead of empty bytes. Currently empty AAD means the
+    // ciphertext is not cryptographically bound to its position, allowing
+    // cross-context splicing attacks. Changing AAD is a wire-format breaking
+    // change and requires a format version bump + migration path.
+    // TODO(安全): 将段落上下文数据（如文件路径、段落索引）绑入 AAD 而非使用空字节。
+    // 当前空 AAD 意味着密文未与其位置做密码学绑定，允许跨上下文拼接攻击。
+    // 修改 AAD 是 wire-format 破坏性变更，需要格式版本升级 + 迁移路径。
     let aad: &[u8] = b"";
     let (ciphertext, nonce, tag) = match algorithm {
         Algorithm::Aes256Gcm => crate::aes_gcm::encrypt(key, plaintext.as_bytes(), aad)?,
@@ -218,6 +224,9 @@ pub fn decrypt_paragraph(
 
     // 5. Decrypt using the appropriate AEAD engine (empty AAD).
     //    使用相应的 AEAD 引擎解密（空 AAD）。
+    // TODO(security): Must match the AAD used in encrypt_paragraph; see the
+    // corresponding TODO there for context-binding considerations.
+    // TODO(安全): 必须与 encrypt_paragraph 中的 AAD 保持一致；参见对应的 TODO。
     let aad: &[u8] = b"";
     let plaintext_bytes = match algorithm {
         Algorithm::Aes256Gcm => crate::aes_gcm::decrypt(key, &nonce, ciphertext, &tag, aad)?,

@@ -41,6 +41,9 @@ zip = { workspace = true }
 # --- Error handling / 错误处理 ---
 thiserror = { workspace = true }
 
+# --- Constant-time comparison / 常量时间比较 ---
+subtle = { workspace = true }
+
 # --- Logging / 日志 ---
 tracing = { workspace = true }
 

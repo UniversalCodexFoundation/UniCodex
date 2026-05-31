@@ -364,8 +364,14 @@ fn verify_layer2(file_data: &[u8]) -> (Option<Layer2Result>, Vec<Layer2SignerInf
 
     for (i, entry) in signer_entries.iter().enumerate() {
         // Check that the stored digest matches the recomputed one.
+        // Security: use constant-time comparison to prevent timing side-channel attacks.
         // 检查存储的摘要与重新计算的是否一致。
-        let digest_matches = entry.digest == recomputed_digest;
+        // 安全：使用常量时间比较防止时序侧信道攻击。
+        let digest_matches: bool = subtle::ConstantTimeEq::ct_eq(
+            entry.digest.as_slice(),
+            recomputed_digest.as_slice(),
+        )
+        .into();
 
         // Verify the Ed25519 signature over the signed_data.
         // 验证 signed_data 上的 Ed25519 签名。
@@ -669,13 +675,19 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
         };
 
         // Verify the manifest digest in the SF matches the actual MANIFEST.MF hash.
+        // Security: use constant-time comparison for digest verification.
         // 验证 SF 中的 manifest 摘要与实际 MANIFEST.MF 哈希一致。
+        // 安全：摘要验证使用常量时间比较。
         let actual_manifest_hash = blake3::hash(&manifest_content);
         let actual_manifest_b64 = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             actual_manifest_hash.as_bytes(),
         );
-        let digest_matches = sf_data.manifest_digest == actual_manifest_b64;
+        let digest_matches: bool = subtle::ConstantTimeEq::ct_eq(
+            sf_data.manifest_digest.as_bytes(),
+            actual_manifest_b64.as_bytes(),
+        )
+        .into();
 
         // Verify the EC signature against the SF content.
         // 验证 EC 签名与 SF 内容一致。
@@ -741,7 +753,15 @@ fn verify_layer1(file_data: &[u8]) -> (Option<Layer1Result>, Vec<Layer1SignerInf
                     // 将 PEM 解码为 DER。
                     match pem_rfc7468::decode_vec(&pem_bytes) {
                         Ok(("CERTIFICATE", pem_der)) => {
-                            if pem_der == cert_der {
+                            // Security: use constant-time comparison for cert DER bytes
+                            // to prevent timing side-channel attacks.
+                            // 安全：对证书 DER 字节使用常量时间比较防止时序侧信道攻击。
+                            let ct_match: bool = subtle::ConstantTimeEq::ct_eq(
+                                pem_der.as_slice(),
+                                cert_der.as_slice(),
+                            )
+                            .into();
+                            if ct_match {
                                 true
                             } else {
                                 let pem_fp = ucx_sign::cert::cert_fingerprint_blake3(&pem_der);

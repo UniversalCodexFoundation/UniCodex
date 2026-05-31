@@ -404,6 +404,7 @@ impl UcxArchive {
     /// 编码为 Base64，并与 MANIFEST.MF 中存储的预期摘要对比。
     pub fn verify_hashes(&mut self) -> Result<Vec<HashVerifyResult>, ParseError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+        use subtle::ConstantTimeEq;
 
         let mut results = Vec::with_capacity(self.manifest.entries.len());
 
@@ -422,7 +423,10 @@ impl UcxArchive {
             let actual_hash = blake3::hash(&bytes);
             let actual_b64 = BASE64_STANDARD.encode(actual_hash.as_bytes());
 
-            let valid = actual_b64 == entry.digest;
+            // Security: use constant-time comparison to prevent timing side-channel
+            // attacks on digest verification.
+            // 安全：使用常量时间比较防止摘要验证的时序侧信道攻击。
+            let valid: bool = actual_b64.as_bytes().ct_eq(entry.digest.as_bytes()).into();
             if !valid {
                 warn!(
                     "Hash mismatch for '{}': expected={}, actual={}",

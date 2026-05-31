@@ -403,7 +403,15 @@ pub fn parse_signing_block(block_data: &[u8]) -> Result<Vec<SignerEntry>, SignEr
     while pos < pairs_end {
         // Read pair_size and pair_id.
         // 读取 pair_size 和 pair_id。
-        let pair_size = read_u64_le(block_data, &mut pos)? as usize;
+        let pair_size_u64 = read_u64_le(block_data, &mut pos)?;
+        // Guard: validate pair_size fits in usize before casting (prevents
+        // silent truncation on 32-bit targets where usize is 32 bits).
+        // 防护：在转换前验证 pair_size 可装入 usize（防止 32 位平台上的静默截断）。
+        let pair_size: usize = usize::try_from(pair_size_u64).map_err(|_| {
+            SignError::SigningFailed(format!(
+                "pair_size {pair_size_u64} exceeds platform usize::MAX"
+            ))
+        })?;
         if pair_size < 4 {
             return Err(SignError::SigningFailed(
                 "pair_size too small (must be at least 4 for pair_id)".to_string(),

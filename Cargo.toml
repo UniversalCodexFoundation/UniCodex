@@ -99,6 +99,7 @@ pbkdf2 = "0.12"                                      # PBKDF2-HMAC-SHA256 key de
 
 # --- Memory safety / 内存安全 ---
 zeroize = { version = "1", features = ["derive"] }   # Secure memory zeroing / 安全内存清零
+subtle = "2"                                         # Constant-time comparison for digest/cert verification / 摘要/证书验证的常量时间比较
 
 # --- Archive / 归档 ---
 zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作

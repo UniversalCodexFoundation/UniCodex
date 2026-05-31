@@ -61,6 +61,10 @@ pub const ARGON2ID_MAX_TIME_COST: u32 = 100;
 /// Argon2id minimum parallelism.
 pub const ARGON2ID_MIN_PARALLELISM: u32 = 1;
 
+/// Argon2id maximum parallelism (uint8 limit of the reference Argon2 C library).
+/// Argon2id 最大并行度（Argon2 参考 C 实现的 uint8 上限）。
+pub const ARGON2ID_MAX_PARALLELISM: u32 = 255;
+
 /// PBKDF2 minimum iteration count. OWASP 2023 推荐 ≥ 600,000；
 /// 此处取保守下限 100,000 以兼容旧文件但仍阻断极弱参数。
 pub const PBKDF2_MIN_ITERATIONS: u32 = 100_000;
@@ -135,6 +139,16 @@ pub fn validate_kdf_params(
             if *parallelism < ARGON2ID_MIN_PARALLELISM {
                 return Err(CryptoError::WeakKdfParameters(format!(
                     "Argon2id parallelism {parallelism} < min {ARGON2ID_MIN_PARALLELISM}"
+                )));
+            }
+            // The reference Argon2 C library stores parallelism as uint8,
+            // so values > 255 would be silently truncated by other implementations.
+            // Argon2 参考 C 实现将并行度存为 uint8，超过 255 的值在其他实现中
+            // 会被静默截断，因此必须在此拒绝。
+            if *parallelism > ARGON2ID_MAX_PARALLELISM {
+                return Err(CryptoError::WeakKdfParameters(format!(
+                    "Argon2id parallelism {parallelism} > max {ARGON2ID_MAX_PARALLELISM} \
+                     (uint8 limit of reference Argon2 C library)"
                 )));
             }
             Ok(())
@@ -616,6 +630,18 @@ mod tests {
         };
         assert!(matches!(
             validate_kdf_params(crate::Kdf::Argon2id, &huge_t),
+            Err(CryptoError::WeakKdfParameters(_))
+        ));
+
+        // Parallelism above uint8 limit (255) → reject.
+        // 并行度超过 uint8 上限 (255) → 拒绝。
+        let huge_p = crate::format::KdfParams::Argon2id {
+            memory_cost_kib: ARGON2ID_MIN_MEMORY_KIB,
+            time_cost: ARGON2ID_MIN_TIME_COST,
+            parallelism: 256,
+        };
+        assert!(matches!(
+            validate_kdf_params(crate::Kdf::Argon2id, &huge_p),
             Err(CryptoError::WeakKdfParameters(_))
         ));
     }

@@ -549,11 +549,25 @@ pub fn deserialize_chunks(
             "chunked ciphertext must contain at least one chunk / 分块密文至少需含一个分块".into(),
         ));
     }
-    // Hard upper bound: chunk_count cannot exceed what the remaining bytes
-    // could possibly represent (each chunk ≥ 4B size prefix + 16B tag = 20B).
+    // Absolute hard cap: 16M chunks (2^24). Even at the minimum chunk size of
+    // CHUNKED_THRESHOLD (1 MiB), this corresponds to 16 TiB of plaintext — well
+    // beyond any realistic file. Prevents allocation abuse before the data-size
+    // check below (which could itself be fooled by a truncated stream header).
+    // 绝对硬上限：1600 万块（2^24）。即使以最小分块大小 CHUNKED_THRESHOLD（1 MiB）
+    // 计算，对应 16 TiB 明文 -- 远超任何合理文件。在下方基于数据大小的检查前
+    // 防止分配滥用（后者可能被截断的流头部欺骗）。
+    const CHUNK_COUNT_HARD_CAP: u32 = 16_777_216;
+    if chunk_count > CHUNK_COUNT_HARD_CAP {
+        return Err(CryptoError::InvalidFormat(format!(
+            "chunk_count {chunk_count} exceeds hard cap {CHUNK_COUNT_HARD_CAP} / \
+             chunk_count 超过硬上限 {CHUNK_COUNT_HARD_CAP}"
+        )));
+    }
+    // Data-size bound: chunk_count cannot exceed what the remaining bytes
+    // could possibly represent (each chunk >= 4B size prefix + 16B tag = 20B).
     // This guards against Vec::with_capacity OOM when `chunk_count` is a
     // maliciously-crafted huge value (e.g. after a header-flags tamper).
-    // 硬上限：chunk_count 不得超过剩余字节可能表达的数量（每块至少 20B）。
+    // 数据大小约束：chunk_count 不得超过剩余字节可能表达的数量（每块至少 20B）。
     // 防御攻击者伪造巨大 chunk_count 导致 Vec::with_capacity OOM。
     let max_possible_chunks = (data.len().saturating_sub(4)) / (4 + TAG_SIZE);
     if chunk_count as usize > max_possible_chunks {
