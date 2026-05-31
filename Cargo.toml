@@ -127,7 +127,7 @@ thiserror = "2.0"                                    # Library error types / 库
 anyhow = "1.0"                                       # Application error handling / 应用级错误处理
 
 # --- CLI / 命令行 ---
-clap = { version = "4.5", features = ["derive"] }    # CLI argument parsing / 命令行参数解析
+clap = { version = "4.6", features = ["derive"] }    # CLI argument parsing / 命令行参数解析
 rpassword = "7"                                      # No-echo passphrase prompt / 无回显口令输入
 
 # --- Async runtime / 异步运行时 ---
