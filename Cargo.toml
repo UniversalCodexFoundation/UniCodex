@@ -102,7 +102,7 @@ zeroize = { version = "1", features = ["derive"] }   # Secure memory zeroing / �
 subtle = "2"                                         # Constant-time comparison for digest/cert verification / 摘要/证书验证的常量时间比较
 
 # --- Archive / 归档 ---
-zip = "8.0"                                          # ZIP archive operations / ZIP 归档操作
+zip = "8.6"                                          # ZIP archive operations / ZIP 归档操作
 
 # --- Version control / 版本控制 ---
 git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }  # libgit2 Rust bindings (vendored for CI) / libgit2 的 Rust 绑定（vendored 用于 CI 跨平台编译）
