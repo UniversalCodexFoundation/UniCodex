@@ -22,7 +22,7 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 | Rust edition | **2024** | 根 `Cargo.toml` |
 | rust-version | **1.85** | 根 `Cargo.toml`（仅 ucx-types 显式继承，其余成员未声明） |
 | resolver | 3 | 根 `Cargo.toml` |
-| license | MIT OR Apache-2.0 | 根 `Cargo.toml` |
+| license | MIT | 根 `Cargo.toml` |
 | 成员 crate | **9 个** | 见下 §4 |
 | 测试总数 | **284**（280 单元 + 4 集成 round_trip） | `grep -rc '#\[test\]' */src` + `tests/` |
 | 顶层 CLI 子命令 | **12 个** | `unicodex-core/src/main.rs` `enum Commands` |
@@ -44,6 +44,15 @@ Unicodex 是统一标准的小说文件标准（UCX 格式），用 Rust 实现�
 
 **Cangjie 关键修复**：Poly1305 hibit 移位 `<<16` -> `<<24`（h4 从 bit 104 起，block[16] 表示 bit 128，偏移=24）。
 **ArkTS 关键修复**：移除 Object.setPrototypeOf（14 errors）；JsonValue 改 Object|null 消除循环类型别名（2 errors）；动态 import 改静态 import fileIo（8 errors）。
+
+### 2026-05-31 第二轮跨模型安全审计（Sonnet + Opus 对抗验证）
+
+- **方法**：Sonnet 14 并行 agent 审计 + Opus 6 并行 agent 独立对抗验证（Codex/OpenAI 2 次尝试均因 API 连接断开失败）
+- **结果**：195 个发现，16 critical/high **全部 CONFIRMED（零误报）**
+- **CRITICAL**: Swift `Int(trailingSize)` trap crash（`SignatureVerifier.swift:200,218`）
+- **P0 HIGH**: Go Argon2 uint8 截断、Go L2 整数溢出、Ruby Argon2 wrapper 忽略 parallelism、Ruby ZipReader nil 解引用、Swift CBC+chunked 未拒绝、Swift AEAD key 副本未清零、Swift zip bomb
+- **系统性**: 全 14 SDK BLAKE3 digest 比较非常量时间、8+ SDK 缺 Argon2 parallelism 上限、5+ SDK L2 pairSize 下溢
+- 详见 [memory/sdk-audit-codex-2026-05-31.md](memory/sdk-audit-codex-2026-05-31.md)
 
 ---
 

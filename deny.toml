@@ -48,9 +48,9 @@ notice = "warn"
 # [licenses] — License compliance checking / 许可证合规检查
 # =============================================================================
 # Ensures all dependencies use licenses compatible with the project's
-# dual license (MIT OR Apache-2.0).
+# MIT license.
 #
-# 确保所有依赖使用与项目双许可证（MIT OR Apache-2.0）兼容的许可证。
+# 确保所有依赖使用与项目 MIT 许可证兼容的许可证。
 # =============================================================================
 [licenses]
 # Deny any unlicensed dependency.

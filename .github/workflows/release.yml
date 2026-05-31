@@ -112,7 +112,7 @@ jobs:
       # --- Checkout repository with full history (for git log changelog) ---
       # --- 检出仓库（完整历史，用于 git log 生成 changelog）---
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -261,7 +261,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # --- Checkout specific tag if manually dispatched ---
       # --- 手动触发时检出指定 tag ---
@@ -305,7 +305,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # --- Create official release ---
       # --- 创建正式版 release ---
@@ -410,10 +410,15 @@ jobs:
             runner: macos-latest
             platform_suffix: darwin_arm64
             archive_ext: tar.gz
+          # --- Linux ARM64 ---
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            platform_suffix: linux_arm64
+            archive_ext: tar.gz
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # --- Checkout specific tag if manually dispatched ---
       # --- 手动触发时检出指定 tag ---
@@ -435,12 +440,22 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # --- Install cross-compilation toolchain for Linux ARM64 ---
+      # --- 为 Linux ARM64 安装交叉编译工具链 ---
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       # -----------------------------------------------------------------
       # Build release binary for the target platform
       # 为目标平台构建 release 二进制
       # -----------------------------------------------------------------
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p unicodex-core
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       # -----------------------------------------------------------------
       # Package artifacts (Unix: tar.gz, Windows: zip)

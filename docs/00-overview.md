@@ -252,7 +252,7 @@ members = [
 [workspace.package]
 version = "0.1.0-alpha.1"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/unicodex/unicodex"
 authors = ["Unicodex Contributors"]
 rust-version = "1.85"

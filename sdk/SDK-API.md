@@ -318,7 +318,7 @@ sdk/<lang>/
 ├── <源码>            // 按语言惯例（src/、lib/ 等）
 ├── <包清单>          // Cargo.toml / go.mod / pyproject.toml / package.json / pom.xml / *.csproj / *.gemspec / composer.json / Package.swift / build.gradle.kts / CMakeLists.txt / pubspec.yaml
 ├── README.md         // 安装、用法示例、能力矩阵(capabilities)、Limitations
-├── LICENSE           // MIT OR Apache-2.0（与父项目一致，双许可放 LICENSE-MIT / LICENSE-APACHE）
+├── LICENSE           // MIT（与父项目一致，双许可放 LICENSE-MIT / LICENSE-APACHE）
 ├── testdata/         // 复制自 sdk/testdata/（自包含，便于独立开源）
 └── <测试>            // 实现 §8 T1–T10（力所能及）
 ```

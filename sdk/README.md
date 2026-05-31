@@ -66,7 +66,7 @@
 git submodule add <remote-url-of-sdk> sdk/<lang>
 ```
 
-许可：全部 SDK 采用 **MIT OR Apache-2.0**（与主项目一致）。
+许可：全部 SDK 采用 **MIT**（与主项目一致）。
 
 ---
 
