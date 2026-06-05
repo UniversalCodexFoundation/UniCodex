@@ -91,7 +91,7 @@ aes-gcm = "0.11.0-rc.3"                             # AES-256-GCM AEAD encryptio
 chacha20poly1305 = "0.11.0-rc.3"                     # ChaCha20-Poly1305 AEAD encryption / ChaCha20-Poly1305 AEAD 加密
 aes = "0.9"                                          # AES block cipher (for CBC mode) / AES 分组密码（CBC 模式用）
 cbc = { version = "0.2", features = ["alloc"] }      # CBC block cipher mode / CBC 分组密码模式
-hmac = "0.12"                                        # HMAC-SHA256 (CBC Encrypt-then-MAC) / HMAC-SHA256（CBC Encrypt-then-MAC）
+hmac = "0.13"                                        # HMAC-SHA256 (CBC Encrypt-then-MAC) / HMAC-SHA256（CBC Encrypt-then-MAC）
 
 # --- Key derivation / 密钥派生 ---
 argon2 = "0.6.0-rc.8"                               # Argon2id password hashing / Argon2id 口令哈希
