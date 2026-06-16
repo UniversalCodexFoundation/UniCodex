@@ -311,7 +311,7 @@ jobs:
       # --- 创建正式版 release ---
       - name: Create official release
         if: needs.prepare.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag_name }}
           name: ${{ needs.prepare.outputs.release_name }}
@@ -351,7 +351,7 @@ jobs:
       # --- 创建预发布 release ---
       - name: Create pre-release
         if: needs.prepare.outputs.is_release != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag_name }}
           name: ${{ needs.prepare.outputs.release_name }}
@@ -519,7 +519,7 @@ jobs:
       # 上传产物到 GitHub Release
       # -----------------------------------------------------------------
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag_name }}
           files: |
